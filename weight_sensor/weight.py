@@ -54,7 +54,7 @@ class WeightSensor:
         self._cal_file = (
             Path(calibration_file)
             if calibration_file is not None
-            else Path(__file__).with_name("calibration.json")
+            else Path(__file__).with_name("default")
         )
         self._load_calibration()
 
