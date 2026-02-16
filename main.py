@@ -13,13 +13,17 @@ from sensors.camera import camera_process
 from sensors.ultrasonic import ultrasonic_process
 from sensors.weight import weight_process
 
+# MQTT Setup and JSON for payload
+import paho.mqtt.client as mqtt
+import json
+
 def main():
 
 	# Queues between sensor processing
 	ir_to_camera = mp.Queue(maxsize=5)
 	camera_to_ultrasonic = mp.Queue(maxsize=5)
 	ultrasonic_to_weight = mp.Queue(maxsize=5)
-	final_results = mp.Queue(maxsize = 5) 
+	final_results = mp.Queue(maxsize = 5)
 
 	# Pin Configurations (subject to change)
 	config = {
@@ -40,18 +44,18 @@ def main():
 	p1 = mp.Process(
 		target = ir_sensor_process,
 		args=(ir_to_camera, config['ir_gpio_pin']),
-		name="ir_sensor"		
+		name="ir_sensor"
 	)
-	proccesses.append(p1)	
+	proccesses.append(p1)
 
 	# Camera Process
 	print("Creating Camera Process")
 	p2 = mp.Process(
 		target = camera_process,
 		args=(ir_to_camera, camera_to_ultrasonic, config["camera_duration"]),
-		name="camera"		
+		name="camera"
 	)
-	proccesses.append(p2)	
+	proccesses.append(p2)
 
 	# Ultrasonic Process
 	print("Creating Ultrasonic Process")
@@ -67,7 +71,7 @@ def main():
 	print("Creating Weight Process")
 	p4 = mp.Process(
 		target = weight_process,
-		args=(ultrasonic_to_weight, final_results, 
+		args=(ultrasonic_to_weight, final_results,
 		      config["weight_dout_pin"], config["weight_sck_pin"],
 		      config["weight_samples"]),
 		name="weight"
@@ -79,7 +83,7 @@ def main():
 		p.start()
 		print(f"Started: {p.name}")
 		time.sleep(0.2)
-	
+
 	print("All Proccesses Running!")
 
 	while True:
