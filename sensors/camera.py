@@ -3,6 +3,7 @@ import cv2
 from picamera2 import Picamera2
 import numpy as np
 from pathlib import Path
+import libcamera
 
 
 def camera_process(input_queue, output_queue, duration=10):
@@ -11,23 +12,26 @@ def camera_process(input_queue, output_queue, duration=10):
     camera = _initialize_camera()
     tmp_dir = _setup_temp_directory()
     ref_gray = _capture_reference_background(camera)
-    ignore_duration=2.0
+    ignore_duration = 0.1
 
     try:
         while True:
             data = input_queue.get()
-            print(f"[Camera] Trigger #{data.get('trigger', '?')} - Streaming for {duration}s (ignoring first {ignore_duration}s)...")
+            print(f"[Camera] Trigger #{data.get('trigger', '?')}")
             
-            best_image, max_score = _capture_best_frame(
+            result = _capture_object_pass(
                 camera, ref_gray, duration, ignore_duration
             )
             
-            if best_image is not None:
-                filename = _save_image(best_image, tmp_dir)
+            if result is not None:
+                mid_frame, enter_time, exit_time = result
+                filename = _save_image(mid_frame, tmp_dir)
                 data['image'] = filename
-                data['sharpness'] = max_score
+                data['enter_time'] = enter_time
+                data['exit_time'] = exit_time
+                data['transit_duration'] = exit_time - enter_time
                 output_queue.put(data)
-                print(f"[Camera] Saved {filename} (Sharpness: {max_score:.1f})")
+                print(f"[Camera] Saved {filename} (transit: {exit_time - enter_time:.3f}s)")
             else:
                 print(f"[Camera] No object detected in {duration}s window")
                 
@@ -39,12 +43,12 @@ def camera_process(input_queue, output_queue, duration=10):
 
 def _initialize_camera():
     camera = Picamera2()
-    config = camera.create_still_configuration(main={"size": (1920, 1080)})
-    camera.configure(config)
+    config = camera.create_still_configuration(main={"size": (3840, 2160)})
+    camera.configure(config) 
     
     camera.set_controls({
         "ExposureTime": 1500,
-        "AnalogueGain": 12.0,
+        "AnalogueGain": 18.0,
         "AfMode": 0,
         "LensPosition": 5.0
     })
@@ -74,27 +78,49 @@ def _capture_reference_background(camera):
     return cv2.GaussianBlur(ref_gray, (21, 21), 0)
 
 
-def _capture_best_frame(camera, ref_gray, duration, ignore_duration):
-    best_image = None
-    max_score = -1
+def _capture_object_pass(camera, ref_gray, duration, ignore_duration,
+                         min_contour_area=2000, exit_grace=0.3):
+    frames = [] 
+    enter_time = None
+    last_detected_time = None
     start_time = time.time()
     
     while (time.time() - start_time) < duration:
         bgr_frame = _capture_frame(camera)
-        elapsed = time.time() - start_time
+        now = time.time()
+        elapsed = now - start_time
         
-        # Skip frames during ignore period
         if elapsed < ignore_duration:
             continue
         
-        # Check if object is present and evaluate sharpness
-        if _object_detected(bgr_frame, ref_gray):
-            score = _get_sharpness_score(bgr_frame)
-            if score > max_score:
-                max_score = score
-                best_image = bgr_frame.copy()
+        detected = _object_detected_contiguous(bgr_frame, ref_gray, min_contour_area)
+        
+        if detected:
+            if enter_time is None:
+                enter_time = now
+                print(f"[Camera] Object entered at +{elapsed:.3f}s")
+            
+            last_detected_time = now
+            frames.append((now, bgr_frame.copy()))
+        
+        else:
+            if enter_time is not None:
+                time_since_last = now - last_detected_time
+                if time_since_last >= exit_grace:
+                    exit_time = last_detected_time
+                    print(f"[Camera] Object exited at +{exit_time - start_time:.3f}s")
+                    
+                    mid_frame = _select_middle_frame(frames, enter_time, exit_time)
+                    return mid_frame, enter_time, exit_time
     
-    return best_image, max_score
+    # Duration expired — if we saw an object but it never "exited", use what we have
+    if enter_time is not None and frames:
+        exit_time = last_detected_time
+        print(f"[Camera] Duration expired, using last detection as exit at +{exit_time - start_time:.3f}s")
+        mid_frame = _select_middle_frame(frames, enter_time, exit_time)
+        return mid_frame, enter_time, exit_time
+    
+    return None
 
 
 def _capture_frame(camera):
@@ -105,20 +131,39 @@ def _capture_frame(camera):
     return cv2.cvtColor(np.ascontiguousarray(array_data), cv2.COLOR_RGB2BGR)
 
 
-def _object_detected(bgr_frame, ref_gray, threshold=500):
+def _object_detected_contiguous(bgr_frame, ref_gray, min_contour_area=2000):
+    
     gray_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
     gray_frame = cv2.GaussianBlur(gray_frame, (21, 21), 0)
     
     frame_delta = cv2.absdiff(ref_gray, gray_frame)
     thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
-    change_amount = np.sum(thresh) / 255
     
-    return change_amount > threshold
+    # Dilate to close small gaps in contiguous regions
+    thresh = cv2.dilate(thresh, None, iterations=2)
+    
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    for contour in contours:
+        if cv2.contourArea(contour) >= min_contour_area:
+            return True
+    
+    return False
 
 
-def _get_sharpness_score(bgr_image):
-    gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
-    return cv2.Laplacian(gray, cv2.CV_64F).var()
+def _select_middle_frame(frames, enter_time, exit_time):
+    mid_time = (enter_time + exit_time) / (2**0.5)
+    
+    best_frame = None
+    best_diff = float('inf')
+    
+    for timestamp, frame in frames:
+        diff = abs(timestamp - mid_time)
+        if diff < best_diff:
+            best_diff = diff
+            best_frame = frame
+    
+    return best_frame
 
 
 def _save_image(image, tmp_dir):

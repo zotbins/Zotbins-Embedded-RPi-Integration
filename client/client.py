@@ -12,31 +12,31 @@ class ClientSender:
     def send(self, fullness: float, weight: float, image_path: str) -> dict:
         
         # Send to Front-End API (WasteRec)
-        # try:
-        #     data = {'weight': weight, 'fullness': fullness}
-        #     files = { 'image': ('image.jpg', open(image_path, 'rb'), 'image/jpeg')}
+        try:
+            data = {'weight': weight, 'fullness': fullness}
+            files = { 'image': ('image.jpg', open(image_path, 'rb'), 'image/jpeg')}
             
-        #     response = requests.post(
-        #         f"{self.frontend_api_url}/record",
-        #         data=data,
-        #         files=files,
-        #         timeout=30
-        #     )
+            response = requests.post(
+                f"{self.frontend_api_url}/record",
+                data=data,
+                files=files,
+                timeout=30
+            )
             
-        #     files['image'][1].close()  
+            files['image'][1].close()  
             
-        #     if response.status_code == 200 or response.status_code == 201:
-        #         result = response.json()
-        #         print(f"[API] Sent to Front-End API successfully")
-        #         if result.get('inference_triggered'):
-        #             print(f"  Inference triggered: {result.get('inference_count')} total")
-        #     else:
-        #         print(f"[API] Front-End API returned status {response.status_code}")
+            if response.status_code == 200 or response.status_code == 201:
+                result = response.json()
+                print(f"[API] Sent to Front-End API successfully")
+                if result.get('inference_triggered'):
+                    print(f"  Inference triggered: {result.get('inference_count')} total")
+            else:
+                print(f"[API] Front-End API returned status {response.status_code}")
                 
-        # except requests.exceptions.ConnectionError as e:
-        #     print(f"[API] Connection error: Cannot reach {self.frontend_api_url}")
-        # except Exception as e:
-        #     print(f"[API] Send error to Front-End API: {e}")
+        except requests.exceptions.ConnectionError as e:
+            print(f"[API] Connection error: Cannot reach {self.frontend_api_url}")
+        except Exception as e:
+            print(f"[API] Send error to Front-End API: {e}")
         
         try:
             os.remove(image_path)
