@@ -1,0 +1,22 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# --- Databases ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Project Specific Data ---
+data/images/
+data/tmp/
+
+# --- OS Generated ---
+.DS_Store
+Thumbs.db
