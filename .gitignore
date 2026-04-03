@@ -16,6 +16,7 @@ venv/
 # --- Project Specific Data ---
 data/images/
 data/tmp/
+sensors/weight_sensor/calibration.json
 
 # --- OS Generated ---
 .DS_Store

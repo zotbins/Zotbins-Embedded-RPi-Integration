@@ -1,13 +1,15 @@
 import json
 import os
+import tempfile
 import time
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
 
 from .errors import CalibrationError, HX711NotReadyError, HX711ReadError
 from .hx711 import HX711, HX711Config
+
+_MAX_WEIGHT_GRAMS = 50000.0
 
 
 def _default_config_dir() -> Path:
@@ -38,15 +40,8 @@ class WeightSensor:
         dt_gpio: int = 5,
         sck_gpio: int = 6,
         gain: int = 128,
-        use_pigpio: bool = False,
         calibration_file: str | Path | None = None,
     ):
-        if use_pigpio:
-            warnings.warn(
-                "pigpio backend is not implemented; falling back to RPi.GPIO with busy-wait timing.",
-                stacklevel=2,
-            )
-
         self.hx = HX711(
             HX711Config(dt_gpio=dt_gpio, sck_gpio=sck_gpio, gain=gain)
         )
@@ -54,7 +49,7 @@ class WeightSensor:
         self._cal_file = (
             Path(calibration_file)
             if calibration_file is not None
-            else Path(__file__).with_name("default")
+            else default_calibration_path("default")
         )
         self._load_calibration()
 
@@ -75,19 +70,23 @@ class WeightSensor:
 
     def _load_calibration(self):
         if not self._cal_file.exists():
+            print(f"[WeightSensor] Calibration file not found: {self._cal_file}")
             return
         try:
             data = json.loads(self._cal_file.read_text())
             self.cal.offset = float(data.get("offset", 0.0))
             self.cal.scale = float(data.get("scale", 0.0))
             self.cal.updated_at = int(data.get("updated_at", 0))
-        except Exception:
-            return
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            print(f"[WeightSensor] Corrupt calibration file {self._cal_file}: {e}")
+        except Exception as e:
+            print(f"[WeightSensor] Failed to read calibration file {self._cal_file}: {e}")
 
     def _save_calibration(self):
         self.cal.updated_at = int(time.time())
         self._cal_file.parent.mkdir(parents=True, exist_ok=True)
-        self._cal_file.write_text(
+
+        payload = (
             json.dumps(
                 {
                     "offset": float(self.cal.offset),
@@ -99,6 +98,18 @@ class WeightSensor:
             )
             + "\n"
         )
+
+        fd, tmp = tempfile.mkstemp(dir=str(self._cal_file.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            os.replace(tmp, str(self._cal_file))
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _robust_mean(values: list[float]) -> float:
@@ -186,4 +197,10 @@ class WeightSensor:
             raise CalibrationError("Missing calibration (scale=0)")
 
         raw = self.read_raw_avg(samples=samples, settle_ms=2)
-        return (raw - float(self.cal.offset)) / float(self.cal.scale)
+        grams = (raw - float(self.cal.offset)) / float(self.cal.scale)
+        grams = max(0.0, grams)
+
+        if grams > _MAX_WEIGHT_GRAMS:
+            print(f"[WeightSensor] Warning: {grams:.1f}g exceeds sanity limit ({_MAX_WEIGHT_GRAMS:.0f}g)")
+
+        return grams
