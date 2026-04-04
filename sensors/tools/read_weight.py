@@ -3,8 +3,8 @@ import argparse
 import json
 import time
 
-from sensors.weight_sensor import WeightSensor, default_calibration_path
-from sensors.weight_sensor.errors import CalibrationError, HX711NotReadyError, HX711ReadError
+from ..weight_sensor import WeightSensor, default_calibration_path
+from ..weight_sensor.errors import CalibrationError, HX711NotReadyError, HX711ReadError
 
 
 def parse_args():
