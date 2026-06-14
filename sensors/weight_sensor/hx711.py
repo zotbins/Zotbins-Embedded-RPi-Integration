@@ -30,7 +30,6 @@ class HX711:
             raise ValueError("gain must be 128, 64, or 32")
         self.cfg = config
 
-        GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(self.cfg.dt_gpio, GPIO.IN)
         GPIO.setup(self.cfg.sck_gpio, GPIO.OUT, initial=GPIO.LOW)
@@ -51,7 +50,7 @@ class HX711:
     def _prime_gain(self):
         try:
             self.read_raw()
-        except Exception:
+        except (HX711NotReadyError, HX711ReadError):
             pass
 
     def is_ready(self) -> bool:

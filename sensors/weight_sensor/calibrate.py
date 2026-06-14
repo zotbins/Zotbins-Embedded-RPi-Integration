@@ -56,11 +56,10 @@ def main(argv=None) -> int:
     p.add_argument("--stable-window-samples", type=int, default=30)
     p.add_argument("--stable-span-raw", type=float, default=1500.0)
     p.add_argument("--stable-timeout-s", type=float, default=12.0)
-    p.add_argument("--no-pigpio", action="store_true")
     args = p.parse_args(argv)
 
     cal_file = args.calibration_file or str(default_calibration_path(args.bin_id))
-    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, use_pigpio=not args.no_pigpio, calibration_file=cal_file)
+    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, calibration_file=cal_file)
 
     try:
         _warmup(ws, attempts=40, settle_ms=5)

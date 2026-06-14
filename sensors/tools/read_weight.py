@@ -1,51 +1,70 @@
+#!/usr/bin/env python3
 import argparse
 import json
 import time
 
-from weight_sensor import CalibrationError, HX711NotReadyError, HX711ReadError, WeightSensor, default_calibration_path
+from ..weight_sensor import WeightSensor, default_calibration_path
+from ..weight_sensor.errors import CalibrationError, HX711NotReadyError, HX711ReadError
 
 
-def main(argv=None) -> int:
-    p = argparse.ArgumentParser()
-    p.add_argument("--dt", type=int, default=5)
-    p.add_argument("--sck", type=int, default=6)
-    p.add_argument("--gain", type=int, default=128)
-    p.add_argument("--samples", type=int, default=12)
+def parse_args():
+    p = argparse.ArgumentParser(description="Read HX711 weight once or continuously")
+    p.add_argument("--dt", type=int, default=5, help="BCM GPIO for HX711 DT/DOUT")
+    p.add_argument("--sck", type=int, default=6, help="BCM GPIO for HX711 SCK")
+    p.add_argument("--gain", type=int, default=128, choices=[128, 64, 32])
+    p.add_argument("--samples", type=int, default=12, help="samples per reading")
+    p.add_argument("--every", type=float, default=0.0, help="seconds between reads; 0=read once")
+    p.add_argument("--count", type=int, default=1, help="number of reads when --every > 0; 0=forever")
+    p.add_argument("--raw", action="store_true", help="print raw average instead of grams")
     p.add_argument("--bin-id", type=str, default="zotbin-1")
     p.add_argument("--calibration-file", type=str, default=None)
-    p.add_argument("--no-pigpio", action="store_true")
-    p.add_argument("--raw", action="store_true")
-    args = p.parse_args(argv)
+    p.add_argument("--json", action="store_true", help="emit JSON lines")
+    return p.parse_args()
 
+
+def emit(obj, as_json: bool):
+    if as_json:
+        print(json.dumps(obj), flush=True)
+    else:
+        print(obj, flush=True)
+
+
+def main() -> int:
+    args = parse_args()
     cal_file = args.calibration_file or str(default_calibration_path(args.bin_id))
-    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, use_pigpio=not args.no_pigpio, calibration_file=cal_file)
-    try:
+    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, calibration_file=cal_file)
+
+    def read_once():
+        ts = time.time()
         if args.raw:
             raw = ws.read_raw_avg(samples=args.samples, settle_ms=2)
-            print(json.dumps({"ts": time.time(), "status": "ok", "bin_id": args.bin_id, "raw": raw}), flush=True)
+            emit({"ts": ts, "raw": raw} if args.json else f"raw_avg={raw:.2f}", args.json)
+        else:
+            grams = ws.read_grams(samples=args.samples)
+            emit({"ts": ts, "weight_grams": grams} if args.json else f"weight_grams={grams:.2f}", args.json)
+
+    try:
+        if args.every <= 0:
+            read_once()
             return 0
 
-        grams = ws.read_grams(samples=args.samples)
-        print(
-            json.dumps(
-                {
-                    "ts": time.time(),
-                    "status": "ok",
-                    "bin_id": args.bin_id,
-                    "weight_grams": grams,
-                    "offset": ws.offset,
-                    "scale": ws.scale,
-                    "calibration_file": str(ws.calibration_file),
-                }
-            ),
-            flush=True,
-        )
+        i = 0
+        while True:
+            read_once()
+            i += 1
+            if args.count > 0 and i >= args.count:
+                break
+            time.sleep(args.every)
         return 0
-    except (HX711NotReadyError, HX711ReadError) as e:
-        print(json.dumps({"ts": time.time(), "status": "not_ready", "bin_id": args.bin_id, "error": str(e)}), flush=True)
-        return 3
+
     except CalibrationError as e:
-        print(json.dumps({"ts": time.time(), "status": "not_calibrated", "bin_id": args.bin_id, "error": str(e)}), flush=True)
+        emit({"error": f"CalibrationError: {e}"} if args.json else f"CalibrationError: {e}", args.json)
+        return 2
+    except HX711NotReadyError as e:
+        emit({"error": f"HX711NotReadyError: {e}"} if args.json else f"HX711NotReadyError: {e}", args.json)
+        return 3
+    except HX711ReadError as e:
+        emit({"error": f"HX711ReadError: {e}"} if args.json else f"HX711ReadError: {e}", args.json)
         return 4
     finally:
         ws.close()

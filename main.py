@@ -36,7 +36,8 @@ def main():
 		"ultrasonic_samples" : 5,  # Number of Samples from Ultrasonic
 		"weight_dout_pin" : 5, # Weight Data Out Pin
 		"weight_sck_pin" : 6, # Serial Clock Input Pin
-		"weight_samples" :  10 # Total Weight Samples
+		"weight_samples" :  10, # Total Weight Samples
+		"bin_id" : "001"    # Bin identifier for calibration file
 	}
 
 	proccesses = []
@@ -75,7 +76,7 @@ def main():
 		target = weight_process,
 		args=(ultrasonic_to_weight, final_results, 
 		      config["weight_dout_pin"], config["weight_sck_pin"],
-		      config["weight_samples"]),
+		      config["weight_samples"], config["bin_id"]),
 		name="weight"
 	)
 	proccesses.append(p4)
@@ -94,6 +95,10 @@ def main():
 		try:
 			result = final_results.get(timeout=1.0)
 			print(result)
+
+			if result.get('weight') is None:
+				print("[Weight] Skipping — weight unavailable")
+				continue
 
 			record_id = store.store(fullness=result['distance'], weight=result['weight'], image_path=result['image'])
 

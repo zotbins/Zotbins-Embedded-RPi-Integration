@@ -1,21 +1,22 @@
+#!/usr/bin/env python3
 import argparse
 import json
 import time
 
-from weight_sensor import CalibrationError, HX711NotReadyError, HX711ReadError, WeightSensor, default_calibration_path
+from sensors.weight_sensor import WeightSensor, default_calibration_path
+from sensors.weight_sensor.errors import CalibrationError, HX711NotReadyError, HX711ReadError
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
+def parse_args():
+    p = argparse.ArgumentParser(description="Stream HX711 readings as JSON lines")
     p.add_argument("--dt", type=int, default=5)
     p.add_argument("--sck", type=int, default=6)
-    p.add_argument("--gain", type=int, default=128)
+    p.add_argument("--gain", type=int, default=128, choices=[128, 64, 32])
     p.add_argument("--samples", type=int, default=12)
     p.add_argument("--hz", type=float, default=2.0)
+    p.add_argument("--raw", action="store_true")
     p.add_argument("--bin-id", type=str, default="zotbin-1")
     p.add_argument("--calibration-file", type=str, default=None)
-    p.add_argument("--no-pigpio", action="store_true")
-    p.add_argument("--raw", action="store_true")
     p.add_argument("--include-raw", action="store_true")
     return p.parse_args()
 
@@ -23,7 +24,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     cal_file = args.calibration_file or str(default_calibration_path(args.bin_id))
-    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, use_pigpio=not args.no_pigpio, calibration_file=cal_file)
+    ws = WeightSensor(dt_gpio=args.dt, sck_gpio=args.sck, gain=args.gain, calibration_file=cal_file)
     period = 1.0 / max(args.hz, 0.1)
 
     boot = {
@@ -34,7 +35,6 @@ def main() -> int:
         "gain": args.gain,
         "samples": args.samples,
         "hz": args.hz,
-        "use_pigpio": (not args.no_pigpio),
         "calibration_file": str(ws.calibration_file),
         "offset": ws.offset,
         "scale": ws.scale,
