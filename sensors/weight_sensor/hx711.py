@@ -20,6 +20,9 @@ class HX711Config:
     ready_timeout_s: float = 0.8
     clock_delay_us: float = 2.0
     max_read_duration_us: float = 5000.0
+    # The HX711 powers down if SCK stays high > 60 us. The measured time includes the
+    # GPIO call overhead, so the limit is a bit looser; it's there to catch thread switches (ms).
+    max_sck_high_us: float = 100.0
 
 
 class HX711:
@@ -29,6 +32,8 @@ class HX711:
         if config.gain not in self._GAIN_PULSES:
             raise ValueError("gain must be 128, 64, or 32")
         self.cfg = config
+        self._max_high_ns = int(config.max_sck_high_us * 1000)
+        self._clock_stretched = False
 
         GPIO.setwarnings(False)
         GPIO.setmode(GPIO.BCM)
@@ -72,10 +77,13 @@ class HX711:
         return x
 
     def _pulse(self) -> int:
+        t0 = time.perf_counter_ns()
         GPIO.output(self.cfg.sck_gpio, GPIO.HIGH)
         _busy_wait_us(self.cfg.clock_delay_us)
         bit = GPIO.input(self.cfg.dt_gpio)
         GPIO.output(self.cfg.sck_gpio, GPIO.LOW)
+        if time.perf_counter_ns() - t0 > self._max_high_ns:
+            self._clock_stretched = True
         _busy_wait_us(self.cfg.clock_delay_us)
         return bit
 
@@ -83,18 +91,18 @@ class HX711:
         self._wait_ready()
 
         t0 = time.perf_counter_ns()
+        self._clock_stretched = False
 
         value = 0
         for _ in range(24):
             value = (value << 1) | self._pulse()
 
         for _ in range(self._GAIN_PULSES[self.cfg.gain]):
-            GPIO.output(self.cfg.sck_gpio, GPIO.HIGH)
-            _busy_wait_us(self.cfg.clock_delay_us)
-            GPIO.output(self.cfg.sck_gpio, GPIO.LOW)
-            _busy_wait_us(self.cfg.clock_delay_us)
+            self._pulse()
 
         elapsed_us = (time.perf_counter_ns() - t0) / 1000.0
+        if self._clock_stretched:
+            raise HX711ReadError("SCK held high too long (thread was preempted mid-read)")
         if elapsed_us > self.cfg.max_read_duration_us:
             raise HX711ReadError(
                 f"Read took {elapsed_us:.0f} us (limit {self.cfg.max_read_duration_us:.0f} us)"

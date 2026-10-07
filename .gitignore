@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 .env
 
 # --- Databases ---
@@ -14,8 +15,7 @@ venv/
 *.sqlite3
 
 # --- Project Specific Data ---
-data/images/
-data/tmp/
+data/spool/
 
 # --- OS Generated ---
 .DS_Store

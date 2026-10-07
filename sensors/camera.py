@@ -1,192 +1,118 @@
+import logging
 import time
+
 import cv2
 from picamera2 import Picamera2
-import numpy as np
-from pathlib import Path
-import libcamera
+
+log = logging.getLogger("Camera")
 
 
-def camera_process(input_queue, output_queue, duration=10):
-    print("[Camera] Starting...")
-    
-    camera = _initialize_camera()
-    tmp_dir = _setup_temp_directory()
-    ref_gray = _capture_reference_background(camera)
-    ignore_duration = 0.1
+class Camera:
+    """Detects motion on a small low-res stream and keeps a few full-res frames of the object passing.
 
-    try:
-        while True:
-            data = input_queue.get()
-            print(f"[Camera] Trigger #{data.get('trigger', '?')}")
-            
-            result = _capture_object_pass(
-                camera, ref_gray, duration, ignore_duration
-            )
-            
-            if result is not None:
-                mid_frame, enter_time, exit_time = result
-                filename = _save_image(mid_frame, tmp_dir)
-                data['image'] = filename
-                data['enter_time'] = enter_time
-                data['exit_time'] = exit_time
-                data['transit_duration'] = exit_time - enter_time
-                output_queue.put(data)
-                print(f"[Camera] Saved {filename} (transit: {exit_time - enter_time:.3f}s)")
-            else:
-                print(f"[Camera] No object detected in {duration}s window")
-                
-    except KeyboardInterrupt:
-        print("[Camera] Shutting down")
-    finally:
-        camera.stop()
+    The ISP produces the low-res stream alongside the main one at no extra CPU cost,
+    so motion detection works on ~57k pixels per frame instead of millions.
+    """
 
+    def __init__(self, image_size=(1920, 1080), detect_size=(320, 180),
+                 min_contour_area=15, max_kept_frames=8):
+        self.detect_w, self.detect_h = detect_size
+        self.min_contour_area = min_contour_area
+        self.max_kept_frames = max_kept_frames
 
-def _initialize_camera():
-    camera = Picamera2()
-    config = camera.create_still_configuration(main={"size": (3840, 2160)})
-    camera.configure(config) 
-    
-    camera.set_controls({
-        "ExposureTime": 1500,
-        "AnalogueGain": 18.0,
-        "AfMode": 0,
-        "LensPosition": 5.0
-    })
-    
-    camera.start()
-    return camera
+        self.picam = Picamera2()
+        # "RGB888" is stored as B,G,R in memory, which is what OpenCV expects, so no conversion is needed.
+        # On Pi 3/4 the lores stream must be YUV420; its first plane is the grayscale image.
+        config = self.picam.create_video_configuration(
+            main={"size": image_size, "format": "RGB888"},
+            lores={"size": detect_size, "format": "YUV420"},
+            buffer_count=4,
+        )
+        self.picam.configure(config)
+        self.picam.set_controls({
+            "ExposureTime": 1500,
+            "AnalogueGain": 18.0,
+            "AfMode": 0,
+            "LensPosition": 5.0
+        })
+        self.picam.start()
 
+        log.info("Calibrating background...")
+        time.sleep(1)
+        self.refresh_reference()
 
-def _setup_temp_directory():
-    script_dir = Path(__file__).parent
-    tmp_dir = script_dir.parent / "data" / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"[Camera] Temp directory: {tmp_dir}")
-    return tmp_dir
+    def close(self):
+        self.picam.stop()
+        self.picam.close()
 
+    def refresh_reference(self):
+        """Re-capture the empty background so lighting changes over the day don't cause false detections."""
+        request = self.picam.capture_request()
+        try:
+            self.reference = self._detect_gray(request)
+        finally:
+            request.release()
 
-def _capture_reference_background(camera):
-    print("[Camera] Calibrating background...")
-    time.sleep(1)
-    
-    ref_request = camera.capture_request()
-    ref_frame = np.ascontiguousarray(ref_request.make_array('main'))
-    ref_request.release()
-    
-    ref_gray = cv2.cvtColor(ref_frame, cv2.COLOR_RGB2GRAY)
-    return cv2.GaussianBlur(ref_gray, (21, 21), 0)
+    def capture_pass(self, duration, ignore_duration=0.1, exit_grace=0.3, stop_event=None):
+        """Watch for an object passing through view.
 
+        Returns (frame, enter_time, exit_time) with times from time.monotonic(), or None if nothing was seen.
+        """
+        kept = []  # (timestamp, full-res frame), spread evenly over the pass
+        stride = 1
+        detections = 0
+        enter_time = last_seen = None
+        start = time.monotonic()
 
-def _capture_object_pass(camera, ref_gray, duration, ignore_duration,
-                         min_contour_area=2000, exit_grace=0.3):
-    frames = [] 
-    enter_time = None
-    last_detected_time = None
-    start_time = time.time()
-    
-    while (time.time() - start_time) < duration:
-        bgr_frame = _capture_frame(camera)
-        now = time.time()
-        elapsed = now - start_time
-        
-        if elapsed < ignore_duration:
-            continue
-        
-        detected = _object_detected_contiguous(bgr_frame, ref_gray, min_contour_area)
-        
-        if detected:
-            if enter_time is None:
-                enter_time = now
-                print(f"[Camera] Object entered at +{elapsed:.3f}s")
-            
-            last_detected_time = now
-            frames.append((now, bgr_frame.copy()))
-        
-        else:
-            if enter_time is not None:
-                time_since_last = now - last_detected_time
-                if time_since_last >= exit_grace:
-                    exit_time = last_detected_time
-                    print(f"[Camera] Object exited at +{exit_time - start_time:.3f}s")
-                    
-                    mid_frame = _select_middle_frame(frames, enter_time, exit_time)
-                    return mid_frame, enter_time, exit_time
-    
-    # Duration expired — if we saw an object but it never "exited", use what we have
-    if enter_time is not None and frames:
-        exit_time = last_detected_time
-        print(f"[Camera] Duration expired, using last detection as exit at +{exit_time - start_time:.3f}s")
-        mid_frame = _select_middle_frame(frames, enter_time, exit_time)
-        return mid_frame, enter_time, exit_time
-    
-    return None
+        while time.monotonic() - start < duration:
+            if stop_event is not None and stop_event.is_set():
+                break
 
+            request = self.picam.capture_request()
+            try:
+                now = time.monotonic()
+                if now - start < ignore_duration:
+                    continue
 
-def _capture_frame(camera):
-    request = camera.capture_request()
-    array_data = request.make_array('main')
-    request.release()
-    
-    return cv2.cvtColor(np.ascontiguousarray(array_data), cv2.COLOR_RGB2BGR)
+                if self._motion_detected(self._detect_gray(request)):
+                    if enter_time is None:
+                        enter_time = now
+                        log.info("Object entered at +%.3fs", now - start)
+                    last_seen = now
 
+                    # Only copy the full-res frame when we're keeping it. When the buffer fills,
+                    # drop every other frame so memory stays bounded however long the pass lasts.
+                    if detections % stride == 0:
+                        kept.append((now, request.make_array("main")))
+                        if len(kept) > self.max_kept_frames:
+                            kept = kept[::2]
+                            stride *= 2
+                    detections += 1
 
-def _object_detected_contiguous(bgr_frame, ref_gray, min_contour_area=2000):
-    
-    gray_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2GRAY)
-    gray_frame = cv2.GaussianBlur(gray_frame, (21, 21), 0)
-    
-    frame_delta = cv2.absdiff(ref_gray, gray_frame)
-    thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
-    
-    # Dilate to close small gaps in contiguous regions
-    thresh = cv2.dilate(thresh, None, iterations=2)
-    
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    for contour in contours:
-        if cv2.contourArea(contour) >= min_contour_area:
-            return True
-    
-    return False
+                elif enter_time is not None and now - last_seen >= exit_grace:
+                    log.info("Object exited at +%.3fs", last_seen - start)
+                    break
+            finally:
+                request.release()
 
+        if enter_time is None:
+            return None
 
-def _select_middle_frame(frames, enter_time, exit_time):
-    mid_time = (enter_time + exit_time) / (2**0.5)
-    
-    best_frame = None
-    best_diff = float('inf')
-    
-    for timestamp, frame in frames:
-        diff = abs(timestamp - mid_time)
-        if diff < best_diff:
-            best_diff = diff
-            best_frame = frame
-    
-    return best_frame
+        mid_time = (enter_time + last_seen) / 2
+        _, frame = min(kept, key=lambda item: abs(item[0] - mid_time))
+        return frame, enter_time, last_seen
 
+    def _detect_gray(self, request):
+        yuv = request.make_array("lores")
+        gray = yuv[:self.detect_h, :self.detect_w]
+        return cv2.GaussianBlur(gray, (5, 5), 0)
 
-def _save_image(image, tmp_dir):
-    img_id = _get_next_image_number(tmp_dir)
-    filename = tmp_dir / f"image_{img_id}.jpg"
-    cv2.imwrite(str(filename), image)
-    return str(filename)
+    def _motion_detected(self, gray):
+        frame_delta = cv2.absdiff(self.reference, gray)
+        thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 
+        # Dilate to close small gaps in contiguous regions
+        thresh = cv2.dilate(thresh, None, iterations=2)
 
-def _get_next_image_number(tmp_dir):
-    if not tmp_dir.exists():
-        return 1
-    
-    files = [f for f in tmp_dir.iterdir() 
-             if f.name.startswith("image_") and f.name.endswith(".jpg")]
-    
-    if not files:
-        return 1
-    
-    nums = []
-    for f in files:
-        num_str = f.stem.replace("image_", "")
-        if num_str.isdigit():
-            nums.append(int(num_str))
-    
-    return max(nums) + 1 if nums else 1
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        return any(cv2.contourArea(c) >= self.min_contour_area for c in contours)

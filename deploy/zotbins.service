@@ -1,0 +1,19 @@
+# Installed by the command in README.md, which fills in @USER@ and @DIR@.
+[Unit]
+Description=ZotBins sensor pipeline
+After=network-online.target pigpiod.service
+Wants=network-online.target pigpiod.service
+
+[Service]
+Type=simple
+User=@USER@
+SupplementaryGroups=gpio video
+WorkingDirectory=@DIR@
+ExecStart=@DIR@/.venv/bin/python main.py
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

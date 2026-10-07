@@ -1,109 +1,156 @@
+#!/usr/bin/env python3
+import logging
 import multiprocessing as mp
+import queue
+import signal
 import time
-import sys
-import os
+from pathlib import Path
 
-# Sensor Script Imports
+import cv2
+
+from client.client import Uploader
+from data.spool import Spool
+from sensors.camera import Camera
 from sensors.ir_sensor import ir_sensor_process
-from sensors.camera import camera_process
-from sensors.ultrasonic import ultrasonic_process
-from sensors.weight import weight_process
-from data.data_store import DataStore
-from client.client import ClientSender
+from sensors.ultrasonic import Ultrasonic
+from sensors.weight import Weight
+
+log = logging.getLogger("Main")
+
+CONFIG = {
+    # Pin Configurations (subject to change)
+    "ir_gpio_pin": 5,  # IR sensor pin
+    "ultrasonic_trig_pin": 23,  # Ultrasonic Trigger Pin
+    "ultrasonic_echo_pin": 24,  # Ultrasonic Echo Pin
+    "weight_dout_pin": 5,  # Weight Data Out Pin
+    "weight_sck_pin": 6,  # Serial Clock Input Pin
+
+    "debounce_time": 3.0,  # Seconds to ignore after IR trigger
+    "max_trigger_age": 2.0,  # Skip triggers that waited longer than this while the pipeline was busy
+    "camera_duration": 10.0,  # Max seconds the camera watches for an object per trigger
+    "image_size": (1920, 1080),  # Saved image resolution
+    "detect_size": (320, 180),  # Low-res stream used for motion detection
+    "motion_min_area": 15,  # Min changed area (in detect_size pixels) that counts as an object
+    "jpeg_quality": 90,
+    "ultrasonic_samples": 5,  # Number of Samples from Ultrasonic
+    "weight_samples": 10,  # Total Weight Samples
+    "weight_settle_time": 3.0,  # Seconds after the object passes before weighing
+
+    "api_url": "",  # Front-End API base URL; records are spooled until this is set and reachable
+    "spool_dir": Path(__file__).parent / "data" / "spool",
+    "max_records": 1000,  # Oldest spooled records are deleted beyond this
+    "upload_retry_interval": 10.0,
+}
+
+
+def run_pipeline(cfg, triggers, stop, ir_process, camera, ultrasonic, weight, spool, uploader):
+    while not stop.is_set():
+        try:
+            trigger = triggers.get(timeout=0.5)
+        except queue.Empty:
+            if not ir_process.is_alive():
+                raise RuntimeError("IR sensor process died")
+            continue
+
+        age = time.monotonic() - trigger["ts"]
+        if age > cfg["max_trigger_age"]:
+            log.info("Skipping trigger #%d, it waited %.1fs", trigger["trigger"], age)
+            continue
+
+        log.info("-------- Cycle #%d --------", trigger["trigger"])
+        result = camera.capture_pass(cfg["camera_duration"], stop_event=stop)
+        camera.refresh_reference()
+        if result is None:
+            log.info("No object detected in %.0fs window", cfg["camera_duration"])
+            continue
+        frame, enter_time, exit_time = result
+
+        # Do the ultrasonic reading and JPEG encoding while the load cell settles.
+        distance = ultrasonic.measure(cfg["ultrasonic_samples"]) if ultrasonic else None
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, cfg["jpeg_quality"]])
+        del frame
+        if not ok:
+            log.error("JPEG encoding failed")
+            continue
+
+        remaining = exit_time + cfg["weight_settle_time"] - time.monotonic()
+        if remaining > 0:
+            stop.wait(remaining)
+        grams = weight.read_grams() if weight else None
+
+        record_id = spool.add(jpeg.tobytes(), {
+            "fullness": distance,
+            "weight": grams,
+            "transit_duration": round(exit_time - enter_time, 3),
+        })
+        uploader.wake()
+        log.info("Stored %s: distance=%s cm, weight=%s g", record_id, _fmt(distance), _fmt(grams))
+
+
+def _fmt(value):
+    return "n/a" if value is None else f"{value:.2f}"
+
+
+def _try_init(name, factory):
+    """Optional sensors: log and carry on without them if they fail to start."""
+    try:
+        return factory()
+    except Exception as e:
+        log.error("%s unavailable: %s", name, e)
+        return None
+
 
 def main():
-	store = DataStore(max_records=100)
-	sender = ClientSender(
-        frontend_api_url="",
-        photo_lambda_url="",
-		sensor_lambda_url="",
-        bin_id=1
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
     )
+    cfg = CONFIG
+    stop = mp.Event()
+    triggers = mp.Queue(maxsize=5)
 
-	# Queues between sensor processing
-	ir_to_camera = mp.Queue(maxsize=5)
-	camera_to_ultrasonic = mp.Queue(maxsize=5)
-	ultrasonic_to_weight = mp.Queue(maxsize=5)
-	final_results = mp.Queue(maxsize = 5) 
+    # Start the IR watcher before the camera and background threads exist, so the forked child starts clean.
+    ir_process = mp.Process(
+        target=ir_sensor_process,
+        args=(triggers, stop, cfg["ir_gpio_pin"], cfg["debounce_time"]),
+        name="ir_sensor",
+        daemon=True,
+    )
+    ir_process.start()
 
-	# Pin Configurations (subject to change)
-	config = {
-		"ir_gpio_pin": 5, # IR sensor pin
-		"debounce_time" : 3.0, # Seconds to ignore after IR trigger
-		"camera_duration": 10.0, # How long the camera runs for
-		"ultrasonic_trig_pin" : 23,  # Ultrasonic Trigger Pin
-		"ultrasonic_echo_pin" : 24,  # Ultrasonic Echo Pin
-		"ultrasonic_samples" : 5,  # Number of Samples from Ultrasonic
-		"weight_dout_pin" : 5, # Weight Data Out Pin
-		"weight_sck_pin" : 6, # Serial Clock Input Pin
-		"weight_samples" :  10 # Total Weight Samples
-	}
+    def request_stop(signum, frame):
+        log.info("Shutting down...")
+        stop.set()
 
-	proccesses = []
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGTERM, request_stop)
 
-	# IR Sensor Process
-	print("Creating IR Sensor Process")
-	p1 = mp.Process(
-		target = ir_sensor_process,
-		args=(ir_to_camera, config['ir_gpio_pin'], config['debounce_time']),
-		name="ir_sensor"		
-	)
-	proccesses.append(p1)	
+    spool = Spool(cfg["spool_dir"], cfg["max_records"])
+    uploader = Uploader(spool, cfg["api_url"], stop, cfg["upload_retry_interval"])
+    uploader.start()
 
-	# Camera Process
-	print("Creating Camera Process")
-	p2 = mp.Process(
-		target = camera_process,
-		args=(ir_to_camera, camera_to_ultrasonic, config["camera_duration"]),
-		name="camera"		
-	)
-	proccesses.append(p2)	
+    camera = ultrasonic = weight = None
+    try:
+        camera = Camera(cfg["image_size"], cfg["detect_size"], cfg["motion_min_area"])
+        ultrasonic = _try_init("Ultrasonic", lambda: Ultrasonic(
+            cfg["ultrasonic_trig_pin"], cfg["ultrasonic_echo_pin"]))
+        weight = _try_init("Weight", lambda: Weight(
+            cfg["weight_dout_pin"], cfg["weight_sck_pin"], cfg["weight_samples"]))
 
-	# Ultrasonic Process
-	print("Creating Ultrasonic Process")
-	p3 = mp.Process(
-		target = ultrasonic_process,
-		args=(camera_to_ultrasonic, ultrasonic_to_weight,
-		      config["ultrasonic_trig_pin"], config["ultrasonic_echo_pin"], config["ultrasonic_samples"]),
-		name = "ultrasonic"
-	)
-	proccesses.append(p3)
-
-	# Weight Process
-	print("Creating Weight Process")
-	p4 = mp.Process(
-		target = weight_process,
-		args=(ultrasonic_to_weight, final_results, 
-		      config["weight_dout_pin"], config["weight_sck_pin"],
-		      config["weight_samples"]),
-		name="weight"
-	)
-	proccesses.append(p4)
-
-	print("Start All Proccesses...")
-	for p in proccesses:
-		p.start()
-		print(f"Started: {p.name}")
-		time.sleep(0.2)
+        log.info("-------------------- Ready --------------------")
+        run_pipeline(cfg, triggers, stop, ir_process, camera, ultrasonic, weight, spool, uploader)
+    finally:
+        stop.set()
+        uploader.wake()
+        for device in (camera, ultrasonic, weight):
+            if device is not None:
+                device.close()
+        ir_process.join(timeout=2)
+        if ir_process.is_alive():
+            ir_process.terminate()
+        uploader.join(timeout=5)
 
 
-	print("All Proccesses Running!")
-	print("--------------------------------Ready--------------------------------")
-
-	while True:
-		try:
-			result = final_results.get(timeout=1.0)
-			print(result)
-
-			record_id = store.store(fullness=result['distance'], weight=result['weight'], image_path=result['image'])
-
-			print("[API] Send to API")
-			result = sender.send(fullness=result['distance'], weight=result['weight'], image_path=result['image'])
-
-			print("--------------------------------Done Sending--------------------------------")
-
-		except  mp.queues.Empty:
-			continue
-
-main()
-
+if __name__ == "__main__":
+    main()

@@ -1,51 +1,67 @@
-import pigpio
+import logging
+import statistics
+import threading
 import time
 
+import pigpio
 
-def ultrasonic_process(input_queue, output_queue, trig_pin, echo_pin, samples):
-    print("[Ultrasonic] Started")
-    
-    pi = _initialize_pigpio(trig_pin, echo_pin)
-    if not pi:
-        return
-    
-    try:
-        while True:
-            data = input_queue.get()            
-            distance = _measure_distance(pi, trig_pin, echo_pin)
-            data['distance'] = distance
-            output_queue.put(data)
-            print(f"[Ultrasonic] Distance: {distance:.2f} cm")
-            
-    except KeyboardInterrupt:
-        print("[Ultrasonic] Shutting down")
-    finally:
-        pi.stop()
+log = logging.getLogger("Ultrasonic")
+
+SPEED_OF_SOUND_CM_PER_US = 0.0343
+PING_INTERVAL_S = 0.06  # HC-SR04 needs ~60 ms between pings so old echoes don't overlap
 
 
-def _initialize_pigpio(trig_pin, echo_pin):
-    pi = pigpio.pi()
-    
-    if not pi.connected:
-        print("[Ultrasonic] Failed to connect to pigpio daemon")
-    
-    pi.set_mode(trig_pin, pigpio.OUTPUT)
-    pi.set_mode(echo_pin, pigpio.INPUT)
-    
-    return pi
+class Ultrasonic:
+    def __init__(self, trig_pin, echo_pin):
+        self.trig_pin = trig_pin
+        self.echo_pin = echo_pin
 
+        self.pi = pigpio.pi()
+        if not self.pi.connected:
+            raise RuntimeError("Cannot connect to pigpio daemon (sudo systemctl enable --now pigpiod)")
 
-def _measure_distance(pi, trig_pin, echo_pin, timeout=0.1):
-    pi.gpio_trigger(trig_pin, 10, 1)  
-    pulse_start = _wait_for_pin_state(pi, echo_pin, 1, timeout)
-    pulse_end = _wait_for_pin_state(pi, echo_pin, 0, timeout)
-    pulse_duration = pulse_end - pulse_start
-    return (pulse_duration * 34300) / 2
+        self.pi.set_mode(trig_pin, pigpio.OUTPUT)
+        self.pi.set_mode(echo_pin, pigpio.INPUT)
+        self.pi.write(trig_pin, 0)
 
+        self._rise_tick = None
+        self._pulse_us = None
+        self._echo_done = threading.Event()
+        # pigpiod timestamps each edge in microsecond hardware ticks, so the
+        # measurement doesn't depend on Python scheduling or busy-waiting.
+        self._callback = self.pi.callback(echo_pin, pigpio.EITHER_EDGE, self._on_edge)
 
-def _wait_for_pin_state(pi, pin, target_state, timeout):
-    start = time.time()
-    while pi.read(pin) != target_state:
-        if time.time() - start > timeout:
-            break
-    return time.time()
+    def _on_edge(self, gpio, level, tick):
+        if level == 1:
+            self._rise_tick = tick
+        elif level == 0 and self._rise_tick is not None:
+            self._pulse_us = pigpio.tickDiff(self._rise_tick, tick)
+            self._echo_done.set()
+
+    def read_cm(self, timeout=0.1):
+        """Single ping. Returns distance in cm, or None if no echo arrived."""
+        self._rise_tick = None
+        self._echo_done.clear()
+        self.pi.gpio_trigger(self.trig_pin, 10, 1)
+        if not self._echo_done.wait(timeout):
+            return None
+        return self._pulse_us * SPEED_OF_SOUND_CM_PER_US / 2
+
+    def measure(self, samples=5):
+        """Median of several pings. Returns None if every ping failed."""
+        readings = []
+        for i in range(samples):
+            if i:
+                time.sleep(PING_INTERVAL_S)
+            cm = self.read_cm()
+            if cm is not None:
+                readings.append(cm)
+
+        if not readings:
+            log.warning("No echo received in %d pings", samples)
+            return None
+        return statistics.median(readings)
+
+    def close(self):
+        self._callback.cancel()
+        self.pi.stop()
