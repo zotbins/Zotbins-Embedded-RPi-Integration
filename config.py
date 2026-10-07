@@ -8,6 +8,14 @@ CONFIG = {
     "weight_dout_pin": 5,  # Weight Data Out Pin
     "weight_sck_pin": 6,  # Serial Clock Input Pin
 
+    # Sensors to use. A disabled sensor is skipped and its reading is recorded as null.
+    # Without IR, the camera's motion detection starts each cycle; without either, a timer does.
+    "enable_ir": True,
+    "enable_camera": True,
+    "enable_ultrasonic": True,
+    "enable_weight": True,
+    "no_trigger_interval": 30.0,  # Seconds between cycles when IR and camera are both disabled
+
     "debounce_time": 3.0,  # Seconds to ignore after IR trigger
     "max_trigger_age": 2.0,  # Skip triggers that waited longer than this while the pipeline was busy
     "camera_duration": 10.0,  # Max seconds the camera watches for an object per trigger

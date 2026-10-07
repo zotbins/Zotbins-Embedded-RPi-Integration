@@ -23,17 +23,18 @@ class Spool:
         self.max_records = max_records
         self._clean_partial_writes()
 
-    def add(self, jpeg: bytes, record: dict) -> str:
+    def add(self, jpeg: bytes | None, record: dict) -> str:
         now = datetime.now()
         record_id = now.strftime("%Y%m%dT%H%M%S_") + f"{now.microsecond // 1000:03d}"
         record = {
             "id": record_id,
             "ts": now.isoformat(timespec="milliseconds"),
             **record,
-            "image": f"{record_id}.jpg",
+            "image": f"{record_id}.jpg" if jpeg else None,
         }
 
-        _atomic_write(self.dir / f"{record_id}.jpg", jpeg)
+        if jpeg:
+            _atomic_write(self.dir / f"{record_id}.jpg", jpeg)
         _atomic_write(self.dir / f"{record_id}.json", json.dumps(record).encode())
         self._prune(self.dir)
         return record_id
@@ -41,9 +42,9 @@ class Spool:
     def pending(self) -> list[str]:
         return _record_ids(self.dir)
 
-    def load(self, record_id) -> tuple[dict, Path]:
+    def load(self, record_id) -> tuple[dict, Path | None]:
         record = json.loads((self.dir / f"{record_id}.json").read_text())
-        return record, self.dir / record["image"]
+        return record, (self.dir / record["image"] if record["image"] else None)
 
     def remove(self, record_id):
         _remove_record(self.dir, record_id)

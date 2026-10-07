@@ -12,6 +12,13 @@ Records are saved in `data/spool/` as `<timestamp>.jpg` + `<timestamp>.json`. Re
 
 All settings (pins, timings, API URL) are in `config.py`.
 
+### Disabling Sensors
+Set `enable_ir`, `enable_camera`, `enable_ultrasonic` or `enable_weight` to `False` in `config.py` to skip a sensor that isn't connected. The rest of the flow still runs, and the missing reading is stored as `null`:
+- **Weight off:** no load cell settle wait either.
+- **Camera off:** each IR trigger still produces a record, without an image.
+- **IR off:** the camera's motion detection starts each cycle.
+- **IR and camera off:** a cycle runs every `no_trigger_interval` seconds.
+
 ## How to Run
 Requires Raspberry Pi OS (Bookworm recommended) on a Pi 3 or 4.
 ```

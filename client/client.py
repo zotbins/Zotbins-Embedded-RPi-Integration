@@ -45,13 +45,7 @@ class Uploader(threading.Thread):
                 return True
             try:
                 record, image_path = self.spool.load(record_id)
-                with open(image_path, "rb") as image:
-                    response = self.session.post(
-                        f"{self.api_url}/record",
-                        data=_form_fields(record),
-                        files={"image": ("image.jpg", image, "image/jpeg")},
-                        timeout=(5, 30),
-                    )
+                response = self._post(record, image_path)
             except FileNotFoundError:
                 continue  # pruned from the spool while we were working on it
             except requests.RequestException as e:
@@ -71,6 +65,19 @@ class Uploader(threading.Thread):
                 log.error("API rejected %s (%d): %s", record_id, response.status_code, response.text[:200])
                 self.spool.reject(record_id)
         return True
+
+    def _post(self, record, image_path):
+        url = f"{self.api_url}/record"
+        fields = _form_fields(record)
+        if image_path is None:  # camera disabled
+            return self.session.post(url, data=fields, timeout=(5, 30))
+        with open(image_path, "rb") as image:
+            return self.session.post(
+                url,
+                data=fields,
+                files={"image": ("image.jpg", image, "image/jpeg")},
+                timeout=(5, 30),
+            )
 
 
 def _form_fields(record):
