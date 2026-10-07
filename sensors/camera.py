@@ -116,3 +116,38 @@ class Camera:
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return any(cv2.contourArea(c) >= self.min_contour_area for c in contours)
+
+
+if __name__ == "__main__":
+    # Standalone test: python -m sensors.camera [--duration S] [--out DIR]
+    # Each time you press Enter it watches for an object and saves the frame it would have picked.
+    import argparse
+    from pathlib import Path
+
+    from config import CONFIG
+
+    parser = argparse.ArgumentParser(description="Capture object passes and save the selected frame.")
+    parser.add_argument("--duration", type=float, default=CONFIG["camera_duration"])
+    parser.add_argument("--min-area", type=int, default=CONFIG["motion_min_area"])
+    parser.add_argument("--out", type=Path, default=Path(__file__).parent.parent / "data" / "camera_test")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+
+    args.out.mkdir(parents=True, exist_ok=True)
+    camera = Camera(CONFIG["image_size"], CONFIG["detect_size"], args.min_area)
+    try:
+        for n in range(1, 1_000_000):
+            input(f"\nPress Enter, then pass an object in front of the camera ({args.duration:.0f}s window). Ctrl+C to quit.")
+            result = camera.capture_pass(args.duration)
+            camera.refresh_reference()
+            if result is None:
+                print("No object detected")
+                continue
+            frame, enter_time, exit_time = result
+            path = args.out / f"capture_{n}.jpg"
+            cv2.imwrite(str(path), frame)
+            print(f"Saved {path} (in view {exit_time - enter_time:.2f}s)")
+    except (KeyboardInterrupt, EOFError):
+        pass
+    finally:
+        camera.close()

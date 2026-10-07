@@ -10,7 +10,7 @@ Runs on a Raspberry Pi 3 or 4 as two processes:
 
 Records are saved in `data/spool/` as `<timestamp>.jpg` + `<timestamp>.json`. Records the API refuses (4xx) are moved to `data/spool/rejected/`. The oldest are deleted past `max_records`.
 
-All settings (pins, timings, API URL) are in `CONFIG` at the top of `main.py`.
+All settings (pins, timings, API URL) are in `config.py`.
 
 ## How to Run
 Requires Raspberry Pi OS (Bookworm recommended) on a Pi 3 or 4.
@@ -41,6 +41,17 @@ cd sensors && python -m weight_sensor.calibrate --bin-id zotbin-1 && cd ..
 Run:
 ```
 python main.py
+```
+
+## Testing Sensors Individually
+Run these from the project root (with the venv active). Pins default to `config.py`; override them with flags (`--help` lists them). Stop any running `zotbins` service first so it isn't using the pins.
+```
+python -m sensors.ir_sensor                 # prints a line each time the beam breaks
+python -m sensors.ir_sensor --debounce 0    # every break, no 3s lockout
+python -m sensors.ultrasonic                # prints distance (cm) every 0.5s
+python -m sensors.weight                    # prints weight (g) every 0.5s
+python -m sensors.camera                    # press Enter, pass an object, saves the picked frame to data/camera_test/
+python -m sensors.camera --min-area 40      # try a different motion sensitivity
 ```
 
 ## Run at Boot (systemd)

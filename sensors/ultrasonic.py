@@ -65,3 +65,30 @@ class Ultrasonic:
     def close(self):
         self._callback.cancel()
         self.pi.stop()
+
+
+if __name__ == "__main__":
+    # Standalone test: python -m sensors.ultrasonic [--trig N] [--echo N] [--samples N] [--interval S]
+    import argparse
+
+    from config import CONFIG
+
+    parser = argparse.ArgumentParser(description="Print the measured distance repeatedly.")
+    parser.add_argument("--trig", type=int, default=CONFIG["ultrasonic_trig_pin"])
+    parser.add_argument("--echo", type=int, default=CONFIG["ultrasonic_echo_pin"])
+    parser.add_argument("--samples", type=int, default=CONFIG["ultrasonic_samples"])
+    parser.add_argument("--interval", type=float, default=0.5, help="seconds between readings")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+
+    sensor = Ultrasonic(args.trig, args.echo)
+    print(f"TRIG={args.trig} ECHO={args.echo}, median of {args.samples} pings. Ctrl+C to quit.")
+    try:
+        while True:
+            cm = sensor.measure(args.samples)
+            print("no echo" if cm is None else f"{cm:6.1f} cm")
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        sensor.close()

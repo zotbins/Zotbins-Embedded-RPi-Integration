@@ -27,3 +27,32 @@ class Weight:
 
     def close(self):
         self.sensor.close()
+
+
+if __name__ == "__main__":
+    # Standalone test: python -m sensors.weight [--dout N] [--sck N] [--samples N] [--interval S]
+    # To calibrate: cd sensors && python -m weight_sensor.calibrate --bin-id zotbin-1
+    import argparse
+    import time
+
+    from config import CONFIG
+
+    parser = argparse.ArgumentParser(description="Print the measured weight repeatedly.")
+    parser.add_argument("--dout", type=int, default=CONFIG["weight_dout_pin"])
+    parser.add_argument("--sck", type=int, default=CONFIG["weight_sck_pin"])
+    parser.add_argument("--samples", type=int, default=CONFIG["weight_samples"])
+    parser.add_argument("--interval", type=float, default=0.5, help="seconds between readings")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+
+    weight = Weight(args.dout, args.sck, args.samples)
+    print(f"DOUT={args.dout} SCK={args.sck}, calibration {weight.sensor.calibration_file}. Ctrl+C to quit.")
+    try:
+        while True:
+            grams = weight.read_grams()
+            print("read failed" if grams is None else f"{grams:8.1f} g")
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        weight.close()

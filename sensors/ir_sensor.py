@@ -42,3 +42,35 @@ def ir_sensor_process(output_queue, stop_event, gpio_pin=17, debounce_time=3):
     finally:
         # Only release our own pin; GPIO.cleanup() with no args would reset every pin.
         GPIO.cleanup(gpio_pin)
+
+
+if __name__ == "__main__":
+    # Standalone test: python -m sensors.ir_sensor [--pin N] [--debounce S]
+    import argparse
+    import multiprocessing as mp
+
+    from config import CONFIG
+
+    parser = argparse.ArgumentParser(description="Print a line every time the IR beam breaks.")
+    parser.add_argument("--pin", type=int, default=CONFIG["ir_gpio_pin"])
+    parser.add_argument("--debounce", type=float, default=CONFIG["debounce_time"])
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+
+    # Run the real sensor process exactly as main.py does, and print what it sends.
+    triggers, stop = mp.Queue(), mp.Event()
+    proc = mp.Process(target=ir_sensor_process, args=(triggers, stop, args.pin, args.debounce), daemon=True)
+    proc.start()
+    print(f"Watching GPIO {args.pin} (debounce {args.debounce}s). Break the beam; Ctrl+C to quit.")
+    try:
+        while proc.is_alive():
+            try:
+                trigger = triggers.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            print(f"Beam broken: trigger #{trigger['trigger']}")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        proc.join(timeout=2)

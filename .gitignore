@@ -16,6 +16,7 @@ venv/
 
 # --- Project Specific Data ---
 data/spool/
+data/camera_test/
 
 # --- OS Generated ---
 .DS_Store
