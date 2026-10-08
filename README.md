@@ -60,6 +60,8 @@ python -m sensors.ultrasonic                # prints distance (cm) every 0.5s
 python -m sensors.weight                    # prints weight (g) every 0.5s
 python -m sensors.camera                    # press Enter, pass an object, saves the picked frame to data/camera_test/
 python -m sensors.camera --min-area 40      # try a different motion sensitivity
+python -m sensors.camera --delay 5          # take one picture after 5s (no motion detection)
+python -m sensors.camera --delay 5 --count 0   # a picture every 5s until Ctrl+C
 ```
 
 ## Run at Boot (systemd)

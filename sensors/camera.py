@@ -53,6 +53,14 @@ class Camera:
         finally:
             request.release()
 
+    def snapshot(self):
+        """Grab the current full-res frame (BGR)."""
+        request = self.picam.capture_request()
+        try:
+            return request.make_array("main")
+        finally:
+            request.release()
+
     def capture_pass(self, duration, ignore_duration=0.1, exit_grace=0.3, stop_event=None):
         """Watch for an object passing through view.
 
@@ -121,6 +129,7 @@ class Camera:
 if __name__ == "__main__":
     # Standalone test: python -m sensors.camera [--duration S] [--out DIR]
     # Each time you press Enter it watches for an object and saves the frame it would have picked.
+    # With --delay S it instead takes a picture after S seconds (--count N pictures, 0 = until Ctrl+C).
     import argparse
     from pathlib import Path
 
@@ -130,12 +139,26 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=float, default=CONFIG["camera_duration"])
     parser.add_argument("--min-area", type=int, default=CONFIG["motion_min_area"])
     parser.add_argument("--out", type=Path, default=Path(__file__).parent.parent / "data" / "camera_test")
+    parser.add_argument("--delay", type=float, default=None,
+                        help="take a picture after this many seconds instead of detecting motion")
+    parser.add_argument("--count", type=int, default=1, help="pictures to take with --delay (0 = until Ctrl+C)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
 
     args.out.mkdir(parents=True, exist_ok=True)
     camera = Camera(CONFIG["image_size"], CONFIG["detect_size"], args.min_area)
     try:
+        if args.delay is not None:
+            n = 0
+            while args.count == 0 or n < args.count:
+                n += 1
+                print(f"Picture {n} in {args.delay:g}s...", flush=True)
+                time.sleep(args.delay)
+                path = args.out / f"snapshot_{time.strftime('%Y%m%d_%H%M%S')}_{n}.jpg"
+                cv2.imwrite(str(path), camera.snapshot())
+                print(f"Saved {path}")
+            raise SystemExit
+
         for n in range(1, 1_000_000):
             input(f"\nPress Enter, then pass an object in front of the camera ({args.duration:.0f}s window). Ctrl+C to quit.")
             result = camera.capture_pass(args.duration)
