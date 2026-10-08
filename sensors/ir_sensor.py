@@ -45,7 +45,7 @@ def ir_sensor_process(output_queue, stop_event, gpio_pin=17, debounce_time=3):
 
 
 if __name__ == "__main__":
-    # Standalone test: python -m sensors.ir_sensor [--pin N] [--debounce S]
+    # Standalone test: python -m sensors.ir_sensor [--pin N] [--debounce S] [--state [--interval S]]
     import argparse
     import multiprocessing as mp
 
@@ -54,8 +54,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print a line every time the IR beam breaks.")
     parser.add_argument("--pin", type=int, default=CONFIG["ir_gpio_pin"])
     parser.add_argument("--debounce", type=float, default=CONFIG["debounce_time"])
+    parser.add_argument("--state", action="store_true", help="continuously print the beam state instead of triggers")
+    parser.add_argument("--interval", type=float, default=0.2, help="seconds between --state prints")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+
+    if args.state:
+        # Raw view for wiring/alignment: same pin setup as the sensor process, no edge detection.
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(args.pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        print(f"GPIO {args.pin} state every {args.interval}s. Ctrl+C to quit.")
+        try:
+            while True:
+                level = GPIO.input(args.pin)
+                print(f"{time.strftime('%H:%M:%S')}  GPIO{args.pin}={level}  {'clear' if level else 'BROKEN'}", flush=True)
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            GPIO.cleanup(args.pin)
+        raise SystemExit
 
     # Run the real sensor process exactly as main.py does, and print what it sends.
     triggers, stop = mp.Queue(), mp.Event()

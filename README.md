@@ -55,6 +55,7 @@ Run these from the project root (with the venv active). Pins default to `config.
 ```
 python -m sensors.ir_sensor                 # prints a line each time the beam breaks
 python -m sensors.ir_sensor --debounce 0    # every break, no 3s lockout
+python -m sensors.ir_sensor --state         # print clear/BROKEN every 0.2s (for wiring and alignment)
 python -m sensors.ultrasonic                # prints distance (cm) every 0.5s
 python -m sensors.weight                    # prints weight (g) every 0.5s
 python -m sensors.camera                    # press Enter, pass an object, saves the picked frame to data/camera_test/
