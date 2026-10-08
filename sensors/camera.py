@@ -29,12 +29,14 @@ class Camera:
             buffer_count=4,
         )
         self.picam.configure(config)
-        self.picam.set_controls({
+        controls = {
             "ExposureTime": 1500,
             "AnalogueGain": 18.0,
-            "AfMode": 0,
-            "LensPosition": 5.0
-        })
+        }
+        # Manual focus only exists on autofocus modules (Camera Module 3); v2 / imx219 is fixed-focus.
+        if "AfMode" in self.picam.camera_controls:
+            controls.update({"AfMode": 0, "LensPosition": 5.0})
+        self.picam.set_controls(controls)
         self.picam.start()
 
         log.info("Calibrating background...")
