@@ -2,9 +2,12 @@ import logging
 import time
 
 import cv2
+import RPi.GPIO as GPIO
 from picamera2 import Picamera2
 
 log = logging.getLogger("Camera")
+
+LIGHT_SETTLE_S = 0.2  # Frames already queued were taken before the light came on; discard this long
 
 
 class Camera:
@@ -15,10 +18,16 @@ class Camera:
     """
 
     def __init__(self, image_size=(1920, 1080), detect_size=(320, 180),
-                 min_contour_area=15, max_kept_frames=8):
+                 min_contour_area=15, max_kept_frames=8, light_pin=None):
         self.detect_w, self.detect_h = detect_size
         self.min_contour_area = min_contour_area
         self.max_kept_frames = max_kept_frames
+        self.light_pin = light_pin
+
+        if light_pin is not None:
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(light_pin, GPIO.OUT, initial=GPIO.LOW)
 
         self.picam = Picamera2()
         # "RGB888" is stored as B,G,R in memory, which is what OpenCV expects, so no conversion is needed.
@@ -41,14 +50,35 @@ class Camera:
 
         log.info("Calibrating background...")
         time.sleep(1)
-        self.refresh_reference()
+        # The reference is taken with the light on, since that's how every pass is watched.
+        self._light_on()
+        try:
+            self.refresh_reference()
+        finally:
+            self._light_off()
 
     def close(self):
         self.picam.stop()
         self.picam.close()
+        if self.light_pin is not None:
+            self._light_off()
+            # Only release our own pin; GPIO.cleanup() with no args would reset every pin.
+            GPIO.cleanup(self.light_pin)
+
+    def _light_on(self):
+        if self.light_pin is None:
+            return
+        GPIO.output(self.light_pin, GPIO.HIGH)
+        end = time.monotonic() + LIGHT_SETTLE_S
+        while time.monotonic() < end:
+            self.picam.capture_request().release()
+
+    def _light_off(self):
+        if self.light_pin is not None:
+            GPIO.output(self.light_pin, GPIO.LOW)
 
     def refresh_reference(self):
-        """Re-capture the empty background so lighting changes over the day don't cause false detections."""
+        """Re-capture the empty background. Call with the light on."""
         request = self.picam.capture_request()
         try:
             self.reference = self._detect_gray(request)
@@ -56,18 +86,34 @@ class Camera:
             request.release()
 
     def snapshot(self):
-        """Grab the current full-res frame (BGR)."""
-        request = self.picam.capture_request()
+        """Grab the current full-res frame (BGR), with the light on."""
+        self._light_on()
         try:
-            return request.make_array("main")
+            request = self.picam.capture_request()
+            try:
+                return request.make_array("main")
+            finally:
+                request.release()
         finally:
-            request.release()
+            self._light_off()
 
     def capture_pass(self, duration, ignore_duration=0.1, exit_grace=0.3, stop_event=None):
-        """Watch for an object passing through view.
+        """Watch for an object passing through view, with the light on.
+
+        Afterwards the empty background is re-captured while the light is still on, so
+        lighting changes over the day don't cause false detections on the next pass.
 
         Returns (frame, enter_time, exit_time) with times from time.monotonic(), or None if nothing was seen.
         """
+        self._light_on()
+        try:
+            result = self._watch(duration, ignore_duration, exit_grace, stop_event)
+            self.refresh_reference()
+            return result
+        finally:
+            self._light_off()
+
+    def _watch(self, duration, ignore_duration, exit_grace, stop_event):
         kept = []  # (timestamp, full-res frame), spread evenly over the pass
         stride = 1
         detections = 0
@@ -148,7 +194,8 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
 
     args.out.mkdir(parents=True, exist_ok=True)
-    camera = Camera(CONFIG["image_size"], CONFIG["detect_size"], args.min_area)
+    camera = Camera(CONFIG["image_size"], CONFIG["detect_size"], args.min_area,
+                    light_pin=CONFIG["camera_light_pin"])
     try:
         if args.delay is not None:
             n = 0
@@ -164,7 +211,6 @@ if __name__ == "__main__":
         for n in range(1, 1_000_000):
             input(f"\nPress Enter, then pass an object in front of the camera ({args.duration:.0f}s window). Ctrl+C to quit.")
             result = camera.capture_pass(args.duration)
-            camera.refresh_reference()
             if result is None:
                 print("No object detected")
                 continue

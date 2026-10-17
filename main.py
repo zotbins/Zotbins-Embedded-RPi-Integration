@@ -93,7 +93,6 @@ def _wait_for_trigger(cfg, stop, triggers, ir_process):
 
 def _watch_camera(cfg, stop, camera, report_empty):
     result = camera.capture_pass(cfg["camera_duration"], stop_event=stop)
-    camera.refresh_reference()
     if result is None:
         if report_empty:
             log.info("No object detected in %.0fs window", cfg["camera_duration"])
@@ -153,7 +152,8 @@ def main():
     camera = ultrasonic = weight = None
     try:
         if cfg["enable_camera"]:
-            camera = Camera(cfg["image_size"], cfg["detect_size"], cfg["motion_min_area"])
+            camera = Camera(cfg["image_size"], cfg["detect_size"], cfg["motion_min_area"],
+                            light_pin=cfg["camera_light_pin"])
         if cfg["enable_ultrasonic"]:
             ultrasonic = _try_init("Ultrasonic", lambda: Ultrasonic(
                 cfg["ultrasonic_trig_pin"], cfg["ultrasonic_echo_pin"]))

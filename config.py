@@ -7,6 +7,7 @@ CONFIG = {
     "ultrasonic_echo_pin": 24,  # Ultrasonic Echo Pin
     "weight_dout_pin": 5,  # Weight Data Out Pin
     "weight_sck_pin": 6,  # Serial Clock Input Pin
+    "camera_light_pin": 17,  # Camera light, on only while the camera is watching (None = no light)
 
     # Sensors to use. A disabled sensor is skipped and its reading is recorded as null.
     # Without IR, the camera's motion detection starts each cycle; without either, a timer does.
