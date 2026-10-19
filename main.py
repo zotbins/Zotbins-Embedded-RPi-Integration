@@ -160,7 +160,9 @@ def main():
     try:
         if cfg["enable_camera"]:
             camera = Camera(cfg["image_size"], cfg["detect_size"], cfg["motion_min_area"],
-                            light_pin=cfg["camera_light_pin"])
+                            ignore_bottom=cfg["motion_ignore_bottom"], light_pin=cfg["camera_light_pin"],
+                            exposure_us=cfg["camera_exposure_us"], gain=cfg["camera_gain"],
+                            fps=cfg["camera_fps"])
         if cfg["enable_ultrasonic"]:
             ultrasonic = _try_init("Ultrasonic", lambda: Ultrasonic(
                 cfg["ultrasonic_trig_pin"], cfg["ultrasonic_echo_pin"]))

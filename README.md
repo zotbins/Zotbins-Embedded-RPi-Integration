@@ -5,7 +5,7 @@ Runs on a Raspberry Pi 3 or 4 as two processes:
 
 - **IR watcher** (own process): checks the beam level every 10 ms and sends a trigger when it changes. By default that's when it goes clear (the lid opens); set `ir_trigger_on` to `"broken"` in `config.py` for the opposite.
 - **Pipeline** (main process), once per trigger:
-  Camera (detect object passing, keep the middle frame) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
+  Camera (detect object passing in the top two-thirds of the view, keep the frame where it looks biggest) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
 - **Uploader** (background thread): sends spooled records to the API oldest first. If the network is down, they stay on disk and are retried every 10 s.
 
 Records are saved in `data/spool/` as `<timestamp>.jpg` + `<timestamp>.json`. Records the API refuses (4xx) are moved to `data/spool/rejected/`. The oldest are deleted past `max_records`.
@@ -60,6 +60,7 @@ python -m sensors.ultrasonic                # prints distance (cm) every 0.5s
 python -m sensors.weight                    # prints weight (g) every 0.5s
 python -m sensors.camera                    # press Enter, pass an object, saves the picked frame to data/camera_test/
 python -m sensors.camera --min-area 40      # try a different motion sensitivity
+python -m sensors.camera --delay 3 --exposure 8000   # try a different exposure (us) before changing config.py
 python -m sensors.camera --delay 5          # take one picture after 5s (no motion detection)
 python -m sensors.camera --delay 5 --count 0   # a picture every 5s until Ctrl+C
 ```

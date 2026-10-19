@@ -11,17 +11,20 @@ LIGHT_SETTLE_S = 0.2  # Frames already queued were taken before the light came o
 
 
 class Camera:
-    """Detects motion on a small low-res stream and keeps a few full-res frames of the object passing.
+    """Detects motion on a small low-res stream and keeps the full-res frame where the object is most visible.
 
     The ISP produces the low-res stream alongside the main one at no extra CPU cost,
     so motion detection works on ~57k pixels per frame instead of millions.
     """
 
     def __init__(self, image_size=(1920, 1080), detect_size=(320, 180),
-                 min_contour_area=15, max_kept_frames=8, light_pin=None):
+                 min_contour_area=15, ignore_bottom=0.0, light_pin=None,
+                 exposure_us=5000, gain=16.0, fps=60):
         self.detect_w, self.detect_h = detect_size
+        # Motion below this row is ignored (e.g. the lid swinging at the bottom of the view).
+        # Only detection is limited; the saved image is always the full frame.
+        self.detect_rows = round(self.detect_h * (1 - ignore_bottom))
         self.min_contour_area = min_contour_area
-        self.max_kept_frames = max_kept_frames
         self.light_pin = light_pin
 
         if light_pin is not None:
@@ -38,9 +41,14 @@ class Camera:
             buffer_count=4,
         )
         self.picam.configure(config)
+        # Fixed exposure, so brightness doesn't drift and look like motion. Short enough to
+        # freeze a falling object; the frame rate gives more chances to catch it mid-air.
+        frame_us = int(1_000_000 / fps)
         controls = {
-            "ExposureTime": 1500,
-            "AnalogueGain": 18.0,
+            "AeEnable": False,
+            "ExposureTime": exposure_us,
+            "AnalogueGain": gain,
+            "FrameDurationLimits": (frame_us, frame_us),
         }
         # Manual focus only exists on autofocus modules (Camera Module 3); v2 / imx219 is fixed-focus.
         if "AfMode" in self.picam.camera_controls:
@@ -104,6 +112,7 @@ class Camera:
         lighting changes over the day don't cause false detections on the next pass.
 
         Returns (frame, enter_time, exit_time) with times from time.monotonic(), or None if nothing was seen.
+        The frame is the one where the moving object covered the most area.
         """
         self._light_on()
         try:
@@ -114,9 +123,8 @@ class Camera:
             self._light_off()
 
     def _watch(self, duration, ignore_duration, exit_grace, stop_event):
-        kept = []  # (timestamp, full-res frame), spread evenly over the pass
-        stride = 1
-        detections = 0
+        best_frame = None
+        best_area = 0
         enter_time = last_seen = None
         start = time.monotonic()
 
@@ -130,20 +138,18 @@ class Camera:
                 if now - start < ignore_duration:
                     continue
 
-                if self._motion_detected(self._detect_gray(request)):
+                area = self._motion_area(self._detect_gray(request))
+                if area >= self.min_contour_area:
                     if enter_time is None:
                         enter_time = now
                         log.info("Object entered at +%.3fs", now - start)
                     last_seen = now
 
-                    # Only copy the full-res frame when we're keeping it. When the buffer fills,
-                    # drop every other frame so memory stays bounded however long the pass lasts.
-                    if detections % stride == 0:
-                        kept.append((now, request.make_array("main")))
-                        if len(kept) > self.max_kept_frames:
-                            kept = kept[::2]
-                            stride *= 2
-                    detections += 1
+                    # Only copy the full-res frame when it beats the best so far,
+                    # so a single frame is held in memory however long the pass lasts.
+                    if area > best_area:
+                        best_area = area
+                        best_frame = request.make_array("main")
 
                 elif enter_time is not None and now - last_seen >= exit_grace:
                     log.info("Object exited at +%.3fs", last_seen - start)
@@ -154,16 +160,16 @@ class Camera:
         if enter_time is None:
             return None
 
-        mid_time = (enter_time + last_seen) / 2
-        _, frame = min(kept, key=lambda item: abs(item[0] - mid_time))
-        return frame, enter_time, last_seen
+        log.info("Picked the frame with the largest object (%.0f px in the detection image)", best_area)
+        return best_frame, enter_time, last_seen
 
     def _detect_gray(self, request):
         yuv = request.make_array("lores")
-        gray = yuv[:self.detect_h, :self.detect_w]
+        gray = yuv[:self.detect_rows, :self.detect_w]
         return cv2.GaussianBlur(gray, (5, 5), 0)
 
-    def _motion_detected(self, gray):
+    def _motion_area(self, gray):
+        """Area (in detection pixels) of the largest region that differs from the empty background."""
         frame_delta = cv2.absdiff(self.reference, gray)
         thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 
@@ -171,7 +177,7 @@ class Camera:
         thresh = cv2.dilate(thresh, None, iterations=2)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return any(cv2.contourArea(c) >= self.min_contour_area for c in contours)
+        return max((cv2.contourArea(c) for c in contours), default=0)
 
 
 if __name__ == "__main__":
@@ -186,6 +192,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capture object passes and save the selected frame.")
     parser.add_argument("--duration", type=float, default=CONFIG["camera_duration"])
     parser.add_argument("--min-area", type=int, default=CONFIG["motion_min_area"])
+    parser.add_argument("--exposure", type=int, default=CONFIG["camera_exposure_us"], help="exposure time in us")
     parser.add_argument("--out", type=Path, default=Path(__file__).parent.parent / "data" / "camera_test")
     parser.add_argument("--delay", type=float, default=None,
                         help="take a picture after this many seconds instead of detecting motion")
@@ -195,7 +202,8 @@ if __name__ == "__main__":
 
     args.out.mkdir(parents=True, exist_ok=True)
     camera = Camera(CONFIG["image_size"], CONFIG["detect_size"], args.min_area,
-                    light_pin=CONFIG["camera_light_pin"])
+                    ignore_bottom=CONFIG["motion_ignore_bottom"], light_pin=CONFIG["camera_light_pin"],
+                    exposure_us=args.exposure, gain=CONFIG["camera_gain"], fps=CONFIG["camera_fps"])
     try:
         if args.delay is not None:
             n = 0
