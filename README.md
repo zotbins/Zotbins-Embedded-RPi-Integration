@@ -3,7 +3,7 @@
 ## Program Description
 Runs on a Raspberry Pi 3 or 4 as two processes:
 
-- **IR watcher** (own process): sleeps on a GPIO edge interrupt and sends a trigger when the beam changes. By default that's when it goes clear (the lid opens); set `ir_trigger_on` to `"broken"` in `config.py` for the opposite.
+- **IR watcher** (own process): checks the beam level every 10 ms and sends a trigger when it changes. By default that's when it goes clear (the lid opens); set `ir_trigger_on` to `"broken"` in `config.py` for the opposite.
 - **Pipeline** (main process), once per trigger:
   Camera (detect object passing, keep the middle frame) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
 - **Uploader** (background thread): sends spooled records to the API oldest first. If the network is down, they stay on disk and are retried every 10 s.

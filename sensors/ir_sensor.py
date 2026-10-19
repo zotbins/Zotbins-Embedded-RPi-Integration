@@ -8,7 +8,9 @@ import RPi.GPIO as GPIO
 log = logging.getLogger("IR")
 
 # The receiver reads high when it sees the emitter (clear) and low when blocked (broken).
-TRIGGER_EDGES = {"clear": GPIO.RISING, "broken": GPIO.FALLING}
+TRIGGER_LEVELS = {"clear": 1, "broken": 0}
+POLL_INTERVAL_S = 0.01
+STABLE_POLLS = 3  # the new level must hold this many polls (30 ms) to count, which filters out glitches
 
 
 def ir_sensor_process(output_queue, stop_event, gpio_pin=17, debounce_time=3, trigger_on="broken"):
@@ -19,19 +21,31 @@ def ir_sensor_process(output_queue, stop_event, gpio_pin=17, debounce_time=3, tr
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(gpio_pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    edge = TRIGGER_EDGES[trigger_on]
+    target = TRIGGER_LEVELS[trigger_on]
     log.info("Started on GPIO %d, triggering when the beam goes %s", gpio_pin, trigger_on)
 
     trigger_count = 0
     last_trigger_time = -debounce_time
+    # Poll the level rather than using edge interrupts: lgpio delivers edges from a thread
+    # started at import, which a forked process doesn't have. Only a change counts, so a beam
+    # that's already in the target state at startup doesn't trigger.
+    armed = GPIO.input(gpio_pin) != target
+    stable = 0
 
     try:
         while not stop_event.is_set():
-            # Sleep in the kernel until the beam changes state instead of polling.
-            # The timeout only exists so we notice stop_event.
-            if GPIO.wait_for_edge(gpio_pin, edge, timeout=500) is None:
+            time.sleep(POLL_INTERVAL_S)
+            if GPIO.input(gpio_pin) != target:
+                armed = True
+                stable = 0
+                continue
+            if not armed:
+                continue
+            stable += 1
+            if stable < STABLE_POLLS:
                 continue
 
+            armed = False
             now = time.monotonic()
             if now - last_trigger_time < debounce_time:
                 continue
@@ -59,7 +73,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Print a line every time the IR sensor triggers.")
     parser.add_argument("--pin", type=int, default=CONFIG["ir_gpio_pin"])
     parser.add_argument("--debounce", type=float, default=CONFIG["debounce_time"])
-    parser.add_argument("--trigger-on", choices=sorted(TRIGGER_EDGES), default=CONFIG["ir_trigger_on"])
+    parser.add_argument("--trigger-on", choices=sorted(TRIGGER_LEVELS), default=CONFIG["ir_trigger_on"])
     parser.add_argument("--state", action="store_true", help="continuously print the beam state instead of triggers")
     parser.add_argument("--interval", type=float, default=0.2, help="seconds between --state prints")
     args = parser.parse_args()
