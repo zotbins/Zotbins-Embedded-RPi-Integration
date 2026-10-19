@@ -36,6 +36,14 @@ CONFIG = {
     "weight_samples": 10,  # Total Weight Samples
     "weight_settle_time": 3.0,  # Seconds after the object passes before weighing
 
+    # On-device classifier (wasterec): which bin the captured item belongs in. Needs onnxruntime.
+    "enable_classifier": True,
+    "classifier_model": Path(__file__).parent / "models" / "wasterec_int8.onnx",
+    "classifier_threshold": 0.6,  # Below this bin probability the fallback bin is used
+    "classifier_fallback": "trash",  # "When in doubt, throw it out"
+    "classifier_threads": 4,
+    "classifier_crop_padding": 0.3,  # Margin around the detected item, as a fraction of its size
+
     "api_url": "",  # Front-End API base URL; records are spooled until this is set and reachable
     "spool_dir": Path(__file__).parent / "data" / "spool",
     "max_records": 1000,  # Oldest spooled records are deleted beyond this

@@ -73,6 +73,28 @@ sudo systemctl enable --now zotbins
 journalctl -u zotbins -f    # view logs
 ```
 
+## On-Device Classifier
+Each captured item is classified on the Pi as **trash / recycle / compost** by the `wasterec` model
+(EfficientNet-Lite2, int8 ONNX, in `models/`). The pipeline crops a square around the detected item
+(the model was trained on single-item crops) and runs it during the settle wait, so it adds no delay.
+The result is saved in each record under `classification` (bin, confidence, material, box) and shows up
+on the local dashboard's composition chart and image labels.
+
+- Needs `onnxruntime` (`pip install -r requirements.txt` in the `.venv`) and **64-bit** Raspberry Pi OS.
+  If it's missing, the pipeline logs `Classifier unavailable` and carries on without it.
+- Settings in `config.py`: `enable_classifier`, `classifier_threshold` (below it the item goes to
+  `classifier_fallback`, "when in doubt, throw it out"), `classifier_crop_padding`.
+- The material -> bin mapping is `bins` in `models/wasterec.json`; edit it for local recycling rules
+  (no retraining needed). To update the model, replace both files in `models/` from the same export.
+
+Tools (from the repo root, with the `.venv` active):
+```
+python -m wasterec.classify_bin --image data/spool/<id>.jpg   # classify a saved photo
+python -m wasterec.predict --image photo.jpg                  # per-material scores
+python -m wasterec.evaluate_bins --data labeled_photos        # bin accuracy on <bin>/ or <material>/ folders
+```
+The `--camera` options of these tools open the camera themselves, so stop `main.py` first.
+
 ## Local Dashboard
 The dashboard ([zotbins-data-visualizer](https://github.com/zotbins/zotbins-data-visualizer), a separate repo) can run on the Pi and show this bin's own records, without the cloud. `data/local_api.py` answers the dashboard's API requests (`/raw_data`, `/inferences`, `/waste-classes`) from `data/spool/` and `data/history/`, and serves the images. There is no ML on the Pi, so the composition charts stay empty.
 

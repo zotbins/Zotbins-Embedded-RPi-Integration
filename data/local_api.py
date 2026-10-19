@@ -2,7 +2,7 @@
 
 It answers the same GET requests as the cloud API, from the files main.py writes
 (data/spool, data/spool/rejected, data/history), so the dashboard works without the cloud.
-There is no ML on the Pi, so /inferences is always empty.
+/inferences and /waste-classes come from the on-device classifier (wasterec) that main.py runs.
 
 Run: python -m data.local_api   (dashboard .env.local: NEXT_PUBLIC_API_URL=http://localhost:8000)
 """
@@ -21,16 +21,24 @@ from data.fullness import fullness_from_distance
 log = logging.getLogger("LocalAPI")
 
 RECORD_DIRS = [CONFIG["spool_dir"], CONFIG["spool_dir"] / "rejected", CONFIG["history_dir"]]
+# The dashboard groups items into landfill / recycle / compost; the classifier calls landfill "trash".
+DASHBOARD_BIN = {"trash": "landfill"}
 IMAGE_NAME = re.compile(r"^\d{8}T\d{6}_\d{3}\.jpg$")
 # The dashboard's next.config.ts forwards this path to /images here, so image links work from any browser.
 IMAGE_URL_PREFIX = "/zotbins-images/"
 
-_items = {}  # record id -> dashboard item; records never change once written
+_items = {}  # record id -> (RawInputItem, InferenceItem or None); records never change once written
 _items_lock = threading.Lock()  # requests are handled on several threads
 
 
-def raw_items():
-    """Every record as the dashboard's RawInputItem, oldest first."""
+def material_bins():
+    """Material -> bin mapping of the deployed model (models/wasterec.json)."""
+    meta = Path(CONFIG["classifier_model"]).with_name("wasterec.json")
+    return json.loads(meta.read_text())["bins"] if meta.exists() else {}
+
+
+def items():
+    """Every record as (RawInputItem, InferenceItem or None), oldest first."""
     with _items_lock:
         return _refresh_items()
 
@@ -43,28 +51,49 @@ def _refresh_items():
             seen.add(record_id)
             if record_id not in _items:
                 try:
-                    _items[record_id] = _to_item(json.loads(path.read_text()))
+                    _items[record_id] = _to_items(json.loads(path.read_text()))
                 except (OSError, ValueError, KeyError) as e:
                     log.warning("Skipping %s: %s", path.name, e)
     for gone in set(_items) - seen:  # pruned since the last request
         del _items[gone]
-    return sorted(_items.values(), key=lambda item: item["captured_at"])
+    return sorted(_items.values(), key=lambda pair: pair[0]["captured_at"])
 
 
-def _to_item(record):
+def _to_items(record):
     captured = datetime.fromisoformat(record["ts"]).astimezone()  # stored as Pi local time
     fullness = record.get("fullness")
     if "distance_cm" not in record and fullness is not None:
         # Recorded before fullness was a fraction: the field held the distance in cm.
         fullness = fullness_from_distance(fullness, CONFIG["bin_empty_distance_cm"], CONFIG["bin_full_distance_cm"])
-    return {
+    classification = record.get("classification")
+    raw = {
         "id": int(captured.timestamp() * 1000),
         "captured_at": captured.isoformat(),
         "image_url": IMAGE_URL_PREFIX + record["image"] if record.get("image") else "",
         "weight_after": record.get("weight"),
         "fullness_after": fullness,
-        "inferred": False,
+        "inferred": classification is not None,
     }
+    inference = None
+    if classification:
+        inference = {
+            "id": raw["id"],
+            "raw_id": raw["id"],
+            "bounding_box": classification.get("box") or [],
+            "class_name": _label(classification),
+            "captured_at": raw["captured_at"],
+        }
+    return raw, inference
+
+
+def _label(classification):
+    """The material to show, consistent with the bin that was decided. When the classifier was unsure
+    and fell back (e.g. paper at 40% -> trash), show a material from the fallback bin instead."""
+    bins = material_bins()
+    material, decided = classification["material"], classification["bin"]
+    if bins.get(material) == decided:
+        return material
+    return decided if bins.get(decided) == decided else next((m for m, b in bins.items() if b == decided), material)
 
 
 def _date_range(query):
@@ -83,19 +112,22 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(url.query)
         try:
             if url.path in ("/", "/health"):
-                self._json({"status": "ok", "services": {"database": "local files", "ml_model": "not on this Pi"}})
+                model = "wasterec (on device)" if Path(CONFIG["classifier_model"]).exists() else "none"
+                self._json({"status": "ok", "services": {"database": "local files", "ml_model": model}})
             elif url.path == "/waste-classes":
-                self._json({})
+                self._json({m: DASHBOARD_BIN.get(b, b) for m, b in material_bins().items()})
             elif url.path == "/raw_data":
                 start, end = _date_range(query)
-                data = [item for item in raw_items()
-                        if start <= datetime.fromisoformat(item["captured_at"]) <= end]
+                data = [raw for raw, _ in items() if start <= datetime.fromisoformat(raw["captured_at"]) <= end]
                 self._json({"start_date": start.isoformat(), "end_date": end.isoformat(),
                             "count": len(data), "data": data})
             elif url.path == "/inferences":
                 start, end = _date_range(query)
+                data = [inf for _, inf in items()
+                        if inf and start <= datetime.fromisoformat(inf["captured_at"]) <= end]
+                latest = data[-1]["captured_at"] if data else end.isoformat()
                 self._json({"start_date": start.isoformat(), "end_date": end.isoformat(),
-                            "count": 0, "data": [], "latest_inferred": end.isoformat()})
+                            "count": len(data), "data": data, "latest_inferred": latest})
             elif url.path.startswith("/images/"):
                 self._image(url.path.removeprefix("/images/"))
             else:

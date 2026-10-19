@@ -1,0 +1,28 @@
+{
+  "built": "2026-10-19T02:20:42+00:00",
+  "model": "tf_efficientnet_lite2",
+  "img_size": 260,
+  "classes": [
+    "cardboard",
+    "glass",
+    "metal",
+    "organic",
+    "paper",
+    "plastic",
+    "textile",
+    "trash"
+  ],
+  "bins": {
+    "cardboard": "recycle",
+    "glass": "recycle",
+    "metal": "recycle",
+    "paper": "recycle",
+    "plastic": "recycle",
+    "organic": "compost",
+    "textile": "trash",
+    "trash": "trash"
+  },
+  "files": {
+    "wasterec_int8.onnx": "34e5371eb88d64bf6e8170851bbfae1fabedd257f9762e7348ccba480c119850"
+  }
+}

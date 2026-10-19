@@ -15,24 +15,27 @@ from sensors.camera import Camera
 from sensors.ir_sensor import ir_sensor_process
 from sensors.ultrasonic import Ultrasonic
 from sensors.weight import Weight
+from wasterec.classifier import BinClassifier
 
 log = logging.getLogger("Main")
 
 
-def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, spool, uploader):
+def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, spool, uploader):
     while not stop.is_set():
         event = _next_event(cfg, stop, triggers, ir_process, camera)
         if event is None:
             continue
-        frame, event_time, transit = event
+        frame, event_time, transit, box = event
 
-        # Encode the JPEG while the trash settles.
-        jpeg = None
+        # Encode the JPEG and classify the item while the trash settles.
+        jpeg = classification = None
         if frame is not None:
             ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, cfg["jpeg_quality"]])
             jpeg = encoded.tobytes() if ok else None
             if not ok:
                 log.error("JPEG encoding failed; storing record without image")
+            if classifier:
+                classification = _classify(classifier, frame, box, cfg["classifier_crop_padding"])
         del frame
 
         # Each reading waits its own settle time, counted from when the object left the frame.
@@ -50,6 +53,7 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, sp
             "distance_cm": None if distance is None else round(distance, 1),
             "weight": grams,
             "transit_duration": None if transit is None else round(transit, 3),
+            "classification": classification,
         })
         uploader.wake()
         log.info("Stored %s: image=%s, fullness=%s (distance=%s cm), weight=%s g",
@@ -60,7 +64,8 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, sp
 def _next_event(cfg, stop, triggers, ir_process, camera):
     """Wait for the next item to go in the bin.
 
-    Returns (frame or None, monotonic time it passed, seconds in view or None), or None if nothing happened.
+    Returns (frame or None, monotonic time it passed, seconds in view or None, object box or None),
+    or None if nothing happened.
     """
     if ir_process is not None:
         trigger = _wait_for_trigger(cfg, stop, triggers, ir_process)
@@ -68,7 +73,7 @@ def _next_event(cfg, stop, triggers, ir_process, camera):
             return None
         log.info("-------- Cycle #%d --------", trigger["trigger"])
         if camera is None:
-            return None, trigger["ts"], None
+            return None, trigger["ts"], None, None
         return _watch_camera(cfg, stop, camera, report_empty=True)
 
     if camera is not None:
@@ -78,7 +83,7 @@ def _next_event(cfg, stop, triggers, ir_process, camera):
     # Neither IR nor camera: run on a timer.
     if stop.wait(cfg["no_trigger_interval"]):
         return None
-    return None, time.monotonic(), None
+    return None, time.monotonic(), None, None
 
 
 def _wait_for_trigger(cfg, stop, triggers, ir_process):
@@ -102,8 +107,26 @@ def _watch_camera(cfg, stop, camera, report_empty):
         if report_empty:
             log.info("No object detected in %.0fs window", cfg["camera_duration"])
         return None
-    frame, enter_time, exit_time = result
-    return frame, exit_time, exit_time - enter_time
+    frame, enter_time, exit_time, box = result
+    return frame, exit_time, exit_time - enter_time, box
+
+
+def _classify(classifier, frame, box, padding):
+    """Which bin the item belongs in, from a square crop around it (the model was trained on single-item crops)."""
+    x1, y1, x2, y2 = box if box else (0, 0, frame.shape[1], frame.shape[0])
+    side = max(x2 - x1, y2 - y1) * (1 + 2 * padding)
+    side = min(max(side, 128), frame.shape[0], frame.shape[1])
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    left = int(min(max(cx - side / 2, 0), frame.shape[1] - side))
+    top = int(min(max(cy - side / 2, 0), frame.shape[0] - side))
+    crop = frame[top:top + int(side), left:left + int(side)]
+
+    t0 = time.perf_counter()
+    result = classifier.classify(crop)
+    ms = round((time.perf_counter() - t0) * 1000)
+    log.info("Classified: %s %.0f%%%s (material: %s) in %d ms", result["bin"].upper(), result["confidence"] * 100,
+             "" if result["confident"] else " - unsure, using fallback", result["material"], ms)
+    return {**result, "box": list(box) if box else None, "ms": ms}
 
 
 def _wait_until(stop, deadline):
@@ -134,9 +157,9 @@ def main():
     cfg = CONFIG
     stop = mp.Event()
     triggers = mp.Queue(maxsize=5)
-    log.info("Sensors: IR=%s camera=%s ultrasonic=%s weight=%s", *(
+    log.info("Sensors: IR=%s camera=%s ultrasonic=%s weight=%s classifier=%s", *(
         "on" if cfg[key] else "off"
-        for key in ("enable_ir", "enable_camera", "enable_ultrasonic", "enable_weight")))
+        for key in ("enable_ir", "enable_camera", "enable_ultrasonic", "enable_weight", "enable_classifier")))
 
     # Start the IR watcher before the camera and background threads exist, so the forked child starts clean.
     ir_process = None
@@ -160,7 +183,7 @@ def main():
     uploader = Uploader(spool, cfg["api_url"], stop, cfg["upload_retry_interval"])
     uploader.start()
 
-    camera = ultrasonic = weight = None
+    camera = ultrasonic = weight = classifier = None
     try:
         if cfg["enable_camera"]:
             camera = Camera(cfg["image_size"], cfg["detect_size"], cfg["motion_min_area"],
@@ -173,9 +196,13 @@ def main():
         if cfg["enable_weight"]:
             weight = _try_init("Weight", lambda: Weight(
                 cfg["weight_dout_pin"], cfg["weight_sck_pin"], cfg["weight_samples"]))
+        if cfg["enable_classifier"] and camera:
+            classifier = _try_init("Classifier", lambda: BinClassifier(
+                cfg["classifier_model"], threshold=cfg["classifier_threshold"],
+                fallback=cfg["classifier_fallback"], threads=cfg["classifier_threads"]))
 
         log.info("-------------------- Ready --------------------")
-        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, spool, uploader)
+        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, spool, uploader)
     finally:
         stop.set()
         uploader.wake()

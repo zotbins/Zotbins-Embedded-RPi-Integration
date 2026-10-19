@@ -24,6 +24,9 @@ class Camera:
         # Motion below this row is ignored (e.g. the lid swinging at the bottom of the view).
         # Only detection is limited; the saved image is always the full frame.
         self.detect_rows = round(self.detect_h * (1 - ignore_bottom))
+        # Detection coordinates -> full-res image coordinates
+        self.scale_x = image_size[0] / self.detect_w
+        self.scale_y = image_size[1] / self.detect_h
         self.min_contour_area = min_contour_area
         self.light_pin = light_pin
 
@@ -111,8 +114,9 @@ class Camera:
         Afterwards the empty background is re-captured while the light is still on, so
         lighting changes over the day don't cause false detections on the next pass.
 
-        Returns (frame, enter_time, exit_time) with times from time.monotonic(), or None if nothing was seen.
-        The frame is the one where the moving object covered the most area.
+        Returns (frame, enter_time, exit_time, box) with times from time.monotonic(), or None if nothing
+        was seen. The frame is the one where the moving object covered the most area, and box is that
+        object's bounding box [x1, y1, x2, y2] in the frame's pixels.
         """
         self._light_on()
         try:
@@ -123,7 +127,7 @@ class Camera:
             self._light_off()
 
     def _watch(self, duration, ignore_duration, exit_grace, stop_event):
-        best_frame = None
+        best_frame = best_box = None
         best_area = 0
         enter_time = last_seen = None
         start = time.monotonic()
@@ -138,7 +142,7 @@ class Camera:
                 if now - start < ignore_duration:
                     continue
 
-                area = self._motion_area(self._detect_gray(request))
+                area, box = self._largest_motion(self._detect_gray(request))
                 if area >= self.min_contour_area:
                     if enter_time is None:
                         enter_time = now
@@ -148,7 +152,7 @@ class Camera:
                     # Only copy the full-res frame when it beats the best so far,
                     # so a single frame is held in memory however long the pass lasts.
                     if area > best_area:
-                        best_area = area
+                        best_area, best_box = area, box
                         best_frame = request.make_array("main")
 
                 elif enter_time is not None and now - last_seen >= exit_grace:
@@ -160,16 +164,19 @@ class Camera:
         if enter_time is None:
             return None
 
-        log.info("Picked the frame with the largest object (%.0f px in the detection image)", best_area)
-        return best_frame, enter_time, last_seen
+        x, y, w, h = best_box
+        box = [round(x * self.scale_x), round(y * self.scale_y),
+               round((x + w) * self.scale_x), round((y + h) * self.scale_y)]
+        log.info("Picked the frame with the largest object (%.0f px in the detection image, box %s)", best_area, box)
+        return best_frame, enter_time, last_seen, box
 
     def _detect_gray(self, request):
         yuv = request.make_array("lores")
         gray = yuv[:self.detect_rows, :self.detect_w]
         return cv2.GaussianBlur(gray, (5, 5), 0)
 
-    def _motion_area(self, gray):
-        """Area (in detection pixels) of the largest region that differs from the empty background."""
+    def _largest_motion(self, gray):
+        """(area, (x, y, w, h)) in detection pixels of the largest region that differs from the empty background."""
         frame_delta = cv2.absdiff(self.reference, gray)
         thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 
@@ -177,7 +184,10 @@ class Camera:
         thresh = cv2.dilate(thresh, None, iterations=2)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return max((cv2.contourArea(c) for c in contours), default=0)
+        if not contours:
+            return 0, None
+        largest = max(contours, key=cv2.contourArea)
+        return cv2.contourArea(largest), cv2.boundingRect(largest)
 
 
 if __name__ == "__main__":
@@ -222,10 +232,10 @@ if __name__ == "__main__":
             if result is None:
                 print("No object detected")
                 continue
-            frame, enter_time, exit_time = result
+            frame, enter_time, exit_time, box = result
             path = args.out / f"capture_{n}.jpg"
             cv2.imwrite(str(path), frame)
-            print(f"Saved {path} (in view {exit_time - enter_time:.2f}s)")
+            print(f"Saved {path} (in view {exit_time - enter_time:.2f}s, object box {box})")
     except (KeyboardInterrupt, EOFError):
         pass
     finally:
