@@ -1,0 +1,18 @@
+# Installed by the command in README.md, which fills in @USER@ and @DASHBOARD_DIR@.
+# The dashboard is the separate zotbins-data-visualizer repo, built with `npm ci && npm run build`.
+[Unit]
+Description=ZotBins dashboard (zotbins-data-visualizer)
+After=network.target zotbins-local-api.service
+Wants=zotbins-local-api.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DASHBOARD_DIR@
+ExecStart=/usr/bin/npx next start -p 9999
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

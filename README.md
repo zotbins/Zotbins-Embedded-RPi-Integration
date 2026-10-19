@@ -90,12 +90,15 @@ Fullness is reported as a fraction using `bin_empty_distance_cm` and `bin_full_d
    ```
 3. Open `http://<pi-address>:9999` from any computer on the network or Tailscale. It refreshes every 10 s.
 
-To start the local API at boot:
+To start both at boot (run from this repo; `DASHBOARD_DIR` is where the dashboard is cloned):
 ```
+DASHBOARD_DIR=~/zotbins-data-visualizer
 sed "s|@USER@|$USER|g; s|@DIR@|$PWD|g" deploy/zotbins-local-api.service | sudo tee /etc/systemd/system/zotbins-local-api.service
+sed "s|@USER@|$USER|g; s|@DASHBOARD_DIR@|$DASHBOARD_DIR|g" deploy/zotbins-dashboard.service | sudo tee /etc/systemd/system/zotbins-dashboard.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now zotbins-local-api
+sudo systemctl enable --now zotbins-local-api zotbins-dashboard
 ```
+After changing the dashboard code, rebuild it (`npm run build`) and `sudo systemctl restart zotbins-dashboard`.
 
 ## Future Implementations
 Here is the bare minimum requirements for deployment:

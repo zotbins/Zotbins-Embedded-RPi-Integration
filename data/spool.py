@@ -29,7 +29,7 @@ class Spool:
         self._clean_partial_writes()
 
     def add(self, jpeg: bytes | None, record: dict) -> str:
-        now = datetime.now()
+        now = datetime.now().astimezone()  # ts keeps its UTC offset, so a timezone change can't shift it
         record_id = now.strftime("%Y%m%dT%H%M%S_") + f"{now.microsecond // 1000:03d}"
         record = {
             "id": record_id,
