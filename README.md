@@ -66,12 +66,31 @@ python -m sensors.camera --delay 5 --count 0   # a picture every 5s until Ctrl+C
 ```
 
 ## Run at Boot (systemd)
+Three services, all started automatically when the Pi boots:
+
+| Service | What it runs |
+|---|---|
+| `zotbins` | The pipeline (`main.py` in the `.venv`), restarted automatically if it crashes |
+| `zotbins-local-api` | The local API the dashboard reads from (see Local Dashboard) |
+| `zotbins-dashboard` | The dashboard on port 9999 (see Local Dashboard) |
+
+Install the pipeline service (run from this repo):
 ```
 sed "s|@USER@|$USER|g; s|@DIR@|$PWD|g" deploy/zotbins.service | sudo tee /etc/systemd/system/zotbins.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now zotbins
-journalctl -u zotbins -f    # view logs
 ```
+
+Everyday commands:
+```
+journalctl -u zotbins -f                     # live pipeline log (Ctrl+C stops watching, not the service)
+sudo systemctl restart zotbins               # after a git pull or a config.py change
+sudo systemctl stop zotbins                  # before running main.py or a sensor test by hand
+sudo systemctl start zotbins                 # start it again afterwards
+systemctl status zotbins zotbins-local-api zotbins-dashboard
+```
+The service owns the camera and GPIO pins while it runs, so stop it before running `python main.py`
+or `python -m sensors.<name>` yourself.
 
 ## On-Device Classifier
 Each captured item is classified on the Pi as **trash / recycle / compost** by the `wasterec` model
