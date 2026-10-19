@@ -21,20 +21,15 @@ from data.fullness import fullness_from_distance
 log = logging.getLogger("LocalAPI")
 
 RECORD_DIRS = [CONFIG["spool_dir"], CONFIG["spool_dir"] / "rejected", CONFIG["history_dir"]]
-# The dashboard groups items into landfill / recycle / compost; the classifier calls landfill "trash".
+# The dashboard only shows the bin: landfill / recycle / compost. The classifier calls landfill "trash".
 DASHBOARD_BIN = {"trash": "landfill"}
+DASHBOARD_BINS = ("landfill", "recycle", "compost")
 IMAGE_NAME = re.compile(r"^\d{8}T\d{6}_\d{3}\.jpg$")
 # The dashboard's next.config.ts forwards this path to /images here, so image links work from any browser.
 IMAGE_URL_PREFIX = "/zotbins-images/"
 
 _items = {}  # record id -> (RawInputItem, InferenceItem or None); records never change once written
 _items_lock = threading.Lock()  # requests are handled on several threads
-
-
-def material_bins():
-    """Material -> bin mapping of the deployed model (models/wasterec.json)."""
-    meta = Path(CONFIG["classifier_model"]).with_name("wasterec.json")
-    return json.loads(meta.read_text())["bins"] if meta.exists() else {}
 
 
 def items():
@@ -80,20 +75,10 @@ def _to_items(record):
             "id": raw["id"],
             "raw_id": raw["id"],
             "bounding_box": classification.get("box") or [],
-            "class_name": _label(classification),
+            "class_name": DASHBOARD_BIN.get(classification["bin"], classification["bin"]),
             "captured_at": raw["captured_at"],
         }
     return raw, inference
-
-
-def _label(classification):
-    """The material to show, consistent with the bin that was decided. When the classifier was unsure
-    and fell back (e.g. paper at 40% -> trash), show a material from the fallback bin instead."""
-    bins = material_bins()
-    material, decided = classification["material"], classification["bin"]
-    if bins.get(material) == decided:
-        return material
-    return decided if bins.get(decided) == decided else next((m for m, b in bins.items() if b == decided), material)
 
 
 def _date_range(query):
@@ -115,7 +100,7 @@ class Handler(BaseHTTPRequestHandler):
                 model = "wasterec (on device)" if Path(CONFIG["classifier_model"]).exists() else "none"
                 self._json({"status": "ok", "services": {"database": "local files", "ml_model": model}})
             elif url.path == "/waste-classes":
-                self._json({m: DASHBOARD_BIN.get(b, b) for m, b in material_bins().items()})
+                self._json({b: b for b in DASHBOARD_BINS})  # class names are already bins
             elif url.path == "/raw_data":
                 start, end = _date_range(query)
                 data = [raw for raw, _ in items() if start <= datetime.fromisoformat(raw["captured_at"]) <= end]

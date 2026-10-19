@@ -124,8 +124,8 @@ def _classify(classifier, frame, box, padding):
     t0 = time.perf_counter()
     result = classifier.classify(crop)
     ms = round((time.perf_counter() - t0) * 1000)
-    log.info("Classified: %s %.0f%%%s (material: %s) in %d ms", result["bin"].upper(), result["confidence"] * 100,
-             "" if result["confident"] else " - unsure, using fallback", result["material"], ms)
+    log.info("Classified: %s %.0f%%%s in %d ms", result["bin"].upper(), result["confidence"] * 100,
+             "" if result["confident"] else " - unsure, using fallback", ms)
     return {**result, "box": list(box) if box else None, "ms": ms}
 
 
