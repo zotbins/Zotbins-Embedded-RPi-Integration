@@ -5,7 +5,7 @@ Runs on a Raspberry Pi 3 or 4 as two processes:
 
 - **IR watcher** (own process): sleeps on a GPIO edge interrupt and sends a trigger when the beam breaks.
 - **Pipeline** (main process), once per trigger:
-  Camera (detect object passing, keep the middle frame) -> Ultrasonic (fullness) -> wait for the load cell to settle -> Weight -> save to spool
+  Camera (detect object passing, keep the middle frame) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
 - **Uploader** (background thread): sends spooled records to the API oldest first. If the network is down, they stay on disk and are retried every 10 s.
 
 Records are saved in `data/spool/` as `<timestamp>.jpg` + `<timestamp>.json`. Records the API refuses (4xx) are moved to `data/spool/rejected/`. The oldest are deleted past `max_records`.
@@ -14,7 +14,7 @@ All settings (pins, timings, API URL) are in `config.py`.
 
 ### Disabling Sensors
 Set `enable_ir`, `enable_camera`, `enable_ultrasonic` or `enable_weight` to `False` in `config.py` to skip a sensor that isn't connected. The rest of the flow still runs, and the missing reading is stored as `null`:
-- **Weight off:** no load cell settle wait either.
+- **Weight off:** weight isn't read. The ultrasonic still waits its own settle time.
 - **Camera off:** each IR trigger still produces a record, without an image.
 - **IR off:** the camera's motion detection starts each cycle.
 - **IR and camera off:** a cycle runs every `no_trigger_interval` seconds.

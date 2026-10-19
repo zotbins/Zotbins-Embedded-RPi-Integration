@@ -25,8 +25,7 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, sp
             continue
         frame, event_time, transit = event
 
-        # Do the ultrasonic reading and JPEG encoding while the load cell settles.
-        distance = ultrasonic.measure(cfg["ultrasonic_samples"]) if ultrasonic else None
+        # Encode the JPEG while the trash settles.
         jpeg = None
         if frame is not None:
             ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, cfg["jpeg_quality"]])
@@ -35,11 +34,13 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, sp
                 log.error("JPEG encoding failed; storing record without image")
         del frame
 
-        grams = None
+        # Each reading waits its own settle time, counted from when the object left the frame.
+        distance = grams = None
+        if ultrasonic:
+            _wait_until(stop, event_time + cfg["ultrasonic_settle_time"])
+            distance = ultrasonic.measure(cfg["ultrasonic_samples"])
         if weight:
-            remaining = event_time + cfg["weight_settle_time"] - time.monotonic()
-            if remaining > 0:
-                stop.wait(remaining)
+            _wait_until(stop, event_time + cfg["weight_settle_time"])
             grams = weight.read_grams()
 
         record_id = spool.add(jpeg, {
@@ -99,6 +100,12 @@ def _watch_camera(cfg, stop, camera, report_empty):
         return None
     frame, enter_time, exit_time = result
     return frame, exit_time, exit_time - enter_time
+
+
+def _wait_until(stop, deadline):
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        stop.wait(remaining)
 
 
 def _fmt(value):

@@ -25,6 +25,7 @@ CONFIG = {
     "motion_min_area": 15,  # Min changed area (in detect_size pixels) that counts as an object
     "jpeg_quality": 90,
     "ultrasonic_samples": 5,  # Number of Samples from Ultrasonic
+    "ultrasonic_settle_time": 3.0,  # Seconds after the object leaves the frame before measuring fullness
     "weight_samples": 10,  # Total Weight Samples
     "weight_settle_time": 3.0,  # Seconds after the object passes before weighing
 
