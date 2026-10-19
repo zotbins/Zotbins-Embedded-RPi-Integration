@@ -17,6 +17,7 @@ CONFIG = {
     "enable_weight": False,  # No HX711 connected yet
     "no_trigger_interval": 30.0,  # Seconds between cycles when IR and camera are both disabled
 
+    "ir_trigger_on": "clear",  # Trigger when the beam goes "clear" (lid opens) or "broken"
     "debounce_time": 3.0,  # Seconds to ignore after IR trigger
     "max_trigger_age": 2.0,  # Skip triggers that waited longer than this while the pipeline was busy
     "camera_duration": 10.0,  # Max seconds the camera watches for an object per trigger

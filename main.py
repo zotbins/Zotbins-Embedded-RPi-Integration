@@ -139,7 +139,7 @@ def main():
     if cfg["enable_ir"]:
         ir_process = mp.Process(
             target=ir_sensor_process,
-            args=(triggers, stop, cfg["ir_gpio_pin"], cfg["debounce_time"]),
+            args=(triggers, stop, cfg["ir_gpio_pin"], cfg["debounce_time"], cfg["ir_trigger_on"]),
             name="ir_sensor",
             daemon=True,
         )

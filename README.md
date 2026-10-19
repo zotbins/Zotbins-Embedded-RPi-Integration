@@ -3,7 +3,7 @@
 ## Program Description
 Runs on a Raspberry Pi 3 or 4 as two processes:
 
-- **IR watcher** (own process): sleeps on a GPIO edge interrupt and sends a trigger when the beam breaks.
+- **IR watcher** (own process): sleeps on a GPIO edge interrupt and sends a trigger when the beam changes. By default that's when it goes clear (the lid opens); set `ir_trigger_on` to `"broken"` in `config.py` for the opposite.
 - **Pipeline** (main process), once per trigger:
   Camera (detect object passing, keep the middle frame) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
 - **Uploader** (background thread): sends spooled records to the API oldest first. If the network is down, they stay on disk and are retried every 10 s.
@@ -53,8 +53,8 @@ python main.py
 ## Testing Sensors Individually
 Run these from the project root (with the venv active). Pins default to `config.py`; override them with flags (`--help` lists them). Stop any running `zotbins` service first so it isn't using the pins.
 ```
-python -m sensors.ir_sensor                 # prints a line each time the beam breaks
-python -m sensors.ir_sensor --debounce 0    # every break, no 3s lockout
+python -m sensors.ir_sensor                 # prints a line each time it triggers (beam goes clear = lid opens)
+python -m sensors.ir_sensor --debounce 0    # every trigger, no 3s lockout
 python -m sensors.ir_sensor --state         # print clear/BROKEN every 0.2s (for wiring and alignment)
 python -m sensors.ultrasonic                # prints distance (cm) every 0.5s
 python -m sensors.weight                    # prints weight (g) every 0.5s
