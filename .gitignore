@@ -16,8 +16,12 @@ venv/
 
 # --- Project Specific Data ---
 data/spool/
+data/history/
 data/camera_test/
 
 # --- OS Generated ---
 .DS_Store
 Thumbs.db
+
+# --- Dashboard (separate repo: github.com/zotbins/zotbins-data-visualizer) ---
+dashboard/

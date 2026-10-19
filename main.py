@@ -9,6 +9,7 @@ import cv2
 
 from client.client import Uploader
 from config import CONFIG
+from data.fullness import fullness_from_distance
 from data.spool import Spool
 from sensors.camera import Camera
 from sensors.ir_sensor import ir_sensor_process
@@ -43,14 +44,17 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, sp
             _wait_until(stop, event_time + cfg["weight_settle_time"])
             grams = weight.read_grams()
 
+        fullness = fullness_from_distance(distance, cfg["bin_empty_distance_cm"], cfg["bin_full_distance_cm"])
         record_id = spool.add(jpeg, {
-            "fullness": distance,
+            "fullness": fullness,
+            "distance_cm": None if distance is None else round(distance, 1),
             "weight": grams,
             "transit_duration": None if transit is None else round(transit, 3),
         })
         uploader.wake()
-        log.info("Stored %s: image=%s, distance=%s cm, weight=%s g",
-                 record_id, "yes" if jpeg else "no", _fmt(distance), _fmt(grams))
+        log.info("Stored %s: image=%s, fullness=%s (distance=%s cm), weight=%s g",
+                 record_id, "yes" if jpeg else "no",
+                 "n/a" if fullness is None else f"{fullness:.0%}", _fmt(distance), _fmt(grams))
 
 
 def _next_event(cfg, stop, triggers, ir_process, camera):
@@ -152,7 +156,7 @@ def main():
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    spool = Spool(cfg["spool_dir"], cfg["max_records"])
+    spool = Spool(cfg["spool_dir"], cfg["max_records"], cfg["history_dir"], cfg["max_history"])
     uploader = Uploader(spool, cfg["api_url"], stop, cfg["upload_retry_interval"])
     uploader.start()
 

@@ -16,11 +16,16 @@ class Spool:
     record is complete. Ids are timestamps, so sorting them gives oldest first.
     """
 
-    def __init__(self, directory, max_records=1000):
+    def __init__(self, directory, max_records=1000, history_dir=None, max_history=1000):
         self.dir = Path(directory)
         self.rejected_dir = self.dir / "rejected"
         self.rejected_dir.mkdir(parents=True, exist_ok=True)
         self.max_records = max_records
+        # Uploaded records move here instead of being deleted, so the local dashboard keeps its history.
+        self.history_dir = Path(history_dir) if history_dir else None
+        self.max_history = max_history
+        if self.history_dir:
+            self.history_dir.mkdir(parents=True, exist_ok=True)
         self._clean_partial_writes()
 
     def add(self, jpeg: bytes | None, record: dict) -> str:
@@ -47,19 +52,21 @@ class Spool:
         return record, (self.dir / record["image"] if record["image"] else None)
 
     def remove(self, record_id):
-        _remove_record(self.dir, record_id)
+        """Take an uploaded record out of the queue (into history, if there is one)."""
+        if self.history_dir:
+            _move_record(self.dir, self.history_dir, record_id)
+            self._prune(self.history_dir, self.max_history)
+        else:
+            _remove_record(self.dir, record_id)
 
     def reject(self, record_id):
         """Keep a record the API refused for inspection, out of the upload queue."""
-        for suffix in (".jpg", ".json"):
-            src = self.dir / f"{record_id}{suffix}"
-            if src.exists():
-                shutil.move(str(src), str(self.rejected_dir / src.name))
+        _move_record(self.dir, self.rejected_dir, record_id)
         self._prune(self.rejected_dir)
 
-    def _prune(self, directory):
+    def _prune(self, directory, limit=None):
         ids = _record_ids(directory)
-        excess = len(ids) - self.max_records
+        excess = len(ids) - (limit or self.max_records)
         if excess <= 0:
             return
         for record_id in ids[:excess]:
@@ -77,6 +84,14 @@ class Spool:
 
 def _record_ids(directory: Path) -> list[str]:
     return sorted(p.stem for p in directory.glob("*.json"))
+
+
+def _move_record(src_dir: Path, dst_dir: Path, record_id):
+    # image first, so the json (the "record is complete" marker) never arrives before its image
+    for suffix in (".jpg", ".json"):
+        src = src_dir / f"{record_id}{suffix}"
+        if src.exists():
+            shutil.move(str(src), str(dst_dir / src.name))
 
 
 def _remove_record(directory: Path, record_id):

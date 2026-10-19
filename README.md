@@ -73,6 +73,30 @@ sudo systemctl enable --now zotbins
 journalctl -u zotbins -f    # view logs
 ```
 
+## Local Dashboard
+The dashboard ([zotbins-data-visualizer](https://github.com/zotbins/zotbins-data-visualizer), a separate repo) can run on the Pi and show this bin's own records, without the cloud. `data/local_api.py` answers the dashboard's API requests (`/raw_data`, `/inferences`, `/waste-classes`) from `data/spool/` and `data/history/`, and serves the images. There is no ML on the Pi, so the composition charts stay empty.
+
+Fullness is reported as a fraction using `bin_empty_distance_cm` and `bin_full_distance_cm` in `config.py`. Uploaded records are moved to `data/history/` (up to `max_history`) instead of being deleted, so the dashboard keeps them.
+
+1. Start the local API (it only listens on the Pi itself):
+   ```
+   python -m data.local_api
+   ```
+2. In the dashboard repo (cloned separately, needs Node.js 20.9+), set `.env.local` to `NEXT_PUBLIC_API_URL=http://localhost:8000`, then:
+   ```
+   npm ci
+   npm run build
+   npx next start -p 9999
+   ```
+3. Open `http://<pi-address>:9999` from any computer on the network or Tailscale. It refreshes every 10 s.
+
+To start the local API at boot:
+```
+sed "s|@USER@|$USER|g; s|@DIR@|$PWD|g" deploy/zotbins-local-api.service | sudo tee /etc/systemd/system/zotbins-local-api.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now zotbins-local-api
+```
+
 ## Future Implementations
 Here is the bare minimum requirements for deployment:
 - IR-Sensor Readings (Completed)

@@ -1,0 +1,16 @@
+# Installed by the command in README.md, which fills in @USER@ and @DIR@.
+[Unit]
+Description=ZotBins local API for the dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DIR@
+ExecStart=/usr/bin/python3 -m data.local_api
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -31,6 +31,8 @@ CONFIG = {
     "jpeg_quality": 90,
     "ultrasonic_samples": 5,  # Number of Samples from Ultrasonic
     "ultrasonic_settle_time": 3.0,  # Seconds after the object leaves the frame before measuring fullness
+    "bin_empty_distance_cm": 66.7,  # Ultrasonic reading with the bin empty (measured) = 0% full
+    "bin_full_distance_cm": 10.0,  # Reading at which the bin counts as 100% full
     "weight_samples": 10,  # Total Weight Samples
     "weight_settle_time": 3.0,  # Seconds after the object passes before weighing
 
@@ -38,4 +40,10 @@ CONFIG = {
     "spool_dir": Path(__file__).parent / "data" / "spool",
     "max_records": 1000,  # Oldest spooled records are deleted beyond this
     "upload_retry_interval": 10.0,
+    "history_dir": Path(__file__).parent / "data" / "history",  # Uploaded records are kept here for the dashboard
+    "max_history": 1000,  # Oldest history records are deleted beyond this
+
+    # Local API the dashboard reads from (python -m data.local_api)
+    "local_api_host": "127.0.0.1",  # Only the dashboard on this Pi talks to it
+    "local_api_port": 8000,
 }
