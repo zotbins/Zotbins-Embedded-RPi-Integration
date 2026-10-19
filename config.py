@@ -23,7 +23,7 @@ CONFIG = {
     "camera_duration": 10.0,  # Max seconds the camera watches for an object per trigger
     "image_size": (1920, 1080),  # Saved image resolution
     "detect_size": (320, 180),  # Low-res stream used for motion detection
-    "camera_exposure_us": 5000,  # 1/200 s: bright enough to see light objects, short enough to freeze a fall
+    "camera_exposure_us": 2000,  # 1/500 s: less motion blur on thrown items; raise if dark items stop being detected
     "camera_gain": 16.0,  # Sensor maximum on the imx519 / imx219
     "camera_fps": 60,  # More frames = more chances to catch the object mid-air (lower if a Pi 3 can't keep up)
     "motion_min_area": 15,  # Min changed area (in detect_size pixels) that counts as an object

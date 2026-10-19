@@ -19,7 +19,7 @@ class Camera:
 
     def __init__(self, image_size=(1920, 1080), detect_size=(320, 180),
                  min_contour_area=15, ignore_bottom=0.0, light_pin=None,
-                 exposure_us=5000, gain=16.0, fps=60):
+                 exposure_us=2000, gain=16.0, fps=60):
         self.detect_w, self.detect_h = detect_size
         # Motion below this row is ignored (e.g. the lid swinging at the bottom of the view).
         # Only detection is limited; the saved image is always the full frame.
