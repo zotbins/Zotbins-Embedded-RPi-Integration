@@ -14,7 +14,7 @@ CONFIG = {
     "enable_ir": True,
     "enable_camera": True,
     "enable_ultrasonic": True,
-    "enable_weight": True,
+    "enable_weight": False,  # No HX711 connected yet
     "no_trigger_interval": 30.0,  # Seconds between cycles when IR and camera are both disabled
 
     "debounce_time": 3.0,  # Seconds to ignore after IR trigger
