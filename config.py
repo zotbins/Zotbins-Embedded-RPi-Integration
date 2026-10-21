@@ -44,12 +44,11 @@ CONFIG = {
     "classifier_threads": 4,
     "classifier_crop_padding": 0.3,  # Margin around the detected item, as a fraction of its size
 
-    "api_url": "",  # Front-End API base URL; records are spooled until this is set and reachable
-    "spool_dir": Path(__file__).parent / "data" / "spool",
-    "max_records": 1000,  # Oldest spooled records are deleted beyond this
+    # Every event is kept permanently: data/events.db (one row each) + data/images/<date>/<id>.jpg
+    "data_dir": Path(__file__).parent / "data",
+    "min_free_disk_mb": 1000,  # Below this much free space the oldest pictures are deleted (their events are kept)
+    "api_url": "",  # Front-End API base URL; events are uploaded once this is set and reachable
     "upload_retry_interval": 10.0,
-    "history_dir": Path(__file__).parent / "data" / "history",  # Uploaded records are kept here for the dashboard
-    "max_history": 1000,  # Oldest history records are deleted beyond this
 
     # Local API the dashboard reads from (python -m data.local_api)
     "local_api_host": "127.0.0.1",  # Only the dashboard on this Pi talks to it

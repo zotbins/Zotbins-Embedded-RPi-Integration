@@ -10,7 +10,7 @@ import cv2
 from client.client import Uploader
 from config import CONFIG
 from data.fullness import fullness_from_distance
-from data.spool import Spool
+from data.store import EventStore
 from sensors.camera import Camera
 from sensors.ir_sensor import ir_sensor_process
 from sensors.ultrasonic import Ultrasonic
@@ -20,7 +20,7 @@ from wasterec.classifier import BinClassifier
 log = logging.getLogger("Main")
 
 
-def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, spool, uploader):
+def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader):
     while not stop.is_set():
         event = _next_event(cfg, stop, triggers, ir_process, camera)
         if event is None:
@@ -48,16 +48,17 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, cl
             grams = weight.read_grams()
 
         fullness = fullness_from_distance(distance, cfg["bin_empty_distance_cm"], cfg["bin_full_distance_cm"])
-        record_id = spool.add(jpeg, {
-            "fullness": fullness,
-            "distance_cm": None if distance is None else round(distance, 1),
-            "weight": grams,
-            "transit_duration": None if transit is None else round(transit, 3),
-            "classification": classification,
-        })
+        event_id = store.add(
+            jpeg,
+            fullness=fullness,
+            distance_cm=None if distance is None else round(distance, 1),
+            weight_g=grams,
+            transit_s=None if transit is None else round(transit, 3),
+            classification=classification,
+        )
         uploader.wake()
         log.info("Stored %s: image=%s, fullness=%s (distance=%s cm), weight=%s g",
-                 record_id, "yes" if jpeg else "no",
+                 event_id, "yes" if jpeg else "no",
                  "n/a" if fullness is None else f"{fullness:.0%}", _fmt(distance), _fmt(grams))
 
 
@@ -179,8 +180,9 @@ def main():
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    spool = Spool(cfg["spool_dir"], cfg["max_records"], cfg["history_dir"], cfg["max_history"])
-    uploader = Uploader(spool, cfg["api_url"], stop, cfg["upload_retry_interval"])
+    store = EventStore(cfg["data_dir"], cfg["min_free_disk_mb"])
+    store.import_legacy(cfg["data_dir"] / "spool", cfg["bin_empty_distance_cm"], cfg["bin_full_distance_cm"])
+    uploader = Uploader(store, cfg["api_url"], stop, cfg["upload_retry_interval"])
     uploader.start()
 
     camera = ultrasonic = weight = classifier = None
@@ -202,7 +204,7 @@ def main():
                 fallback=cfg["classifier_fallback"], threads=cfg["classifier_threads"]))
 
         log.info("-------------------- Ready --------------------")
-        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, spool, uploader)
+        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader)
     finally:
         stop.set()
         uploader.wake()

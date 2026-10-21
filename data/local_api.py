@@ -1,7 +1,7 @@
-"""Serves this bin's own records to the dashboard (zotbins-data-visualizer) running on the Pi.
+"""Serves this bin's own events to the dashboard (zotbins-data-visualizer) running on the Pi.
 
-It answers the same GET requests as the cloud API, from the files main.py writes
-(data/spool, data/spool/rejected, data/history), so the dashboard works without the cloud.
+It answers the same GET requests as the cloud API, from the event store main.py writes
+(data/events.db + data/images), so the dashboard works without the cloud and shows the bin's whole history.
 /inferences and /waste-classes come from the on-device classifier (wasterec) that main.py runs.
 
 Run: python -m data.local_api   (dashboard .env.local: NEXT_PUBLIC_API_URL=http://localhost:8000)
@@ -9,85 +9,62 @@ Run: python -m data.local_api   (dashboard .env.local: NEXT_PUBLIC_API_URL=http:
 import json
 import logging
 import re
-import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from config import CONFIG
-from data.fullness import fullness_from_distance
+from data.store import EventStore
 
 log = logging.getLogger("LocalAPI")
 
-RECORD_DIRS = [CONFIG["spool_dir"], CONFIG["spool_dir"] / "rejected", CONFIG["history_dir"]]
+store = EventStore(CONFIG["data_dir"], CONFIG["min_free_disk_mb"])
 # The dashboard only shows the bin: landfill / recycle / compost. The classifier calls landfill "trash".
 DASHBOARD_BIN = {"trash": "landfill"}
 DASHBOARD_BINS = ("landfill", "recycle", "compost")
-IMAGE_NAME = re.compile(r"^\d{8}T\d{6}_\d{3}\.jpg$")
+IMAGE_NAME = re.compile(r"^(\d{8}T\d{6}_\d{3})\.jpg$")
 # The dashboard's next.config.ts forwards this path to /images here, so image links work from any browser.
 IMAGE_URL_PREFIX = "/zotbins-images/"
 
-_items = {}  # record id -> (RawInputItem, InferenceItem or None); records never change once written
-_items_lock = threading.Lock()  # requests are handled on several threads
+
+def items(query):
+    """Events in the request's date range as (RawInputItem, InferenceItem or None), oldest first."""
+    start, end = _date_range(query)
+    events = store.events(int(start.timestamp() * 1000), int(end.timestamp() * 1000))
+    return start, end, [_to_items(event) for event in events]
 
 
-def items():
-    """Every record as (RawInputItem, InferenceItem or None), oldest first."""
-    with _items_lock:
-        return _refresh_items()
-
-
-def _refresh_items():
-    seen = set()
-    for directory in RECORD_DIRS:
-        for path in Path(directory).glob("*.json"):
-            record_id = path.stem
-            seen.add(record_id)
-            if record_id not in _items:
-                try:
-                    _items[record_id] = _to_items(json.loads(path.read_text()))
-                except (OSError, ValueError, KeyError) as e:
-                    log.warning("Skipping %s: %s", path.name, e)
-    for gone in set(_items) - seen:  # pruned since the last request
-        del _items[gone]
-    return sorted(_items.values(), key=lambda pair: pair[0]["captured_at"])
-
-
-def _to_items(record):
-    captured = datetime.fromisoformat(record["ts"]).astimezone()  # stored as Pi local time
-    fullness = record.get("fullness")
-    if "distance_cm" not in record and fullness is not None:
-        # Recorded before fullness was a fraction: the field held the distance in cm.
-        fullness = fullness_from_distance(fullness, CONFIG["bin_empty_distance_cm"], CONFIG["bin_full_distance_cm"])
-    classification = record.get("classification")
+def _to_items(event):
+    captured = datetime.fromisoformat(event["ts"]).astimezone()  # shown in Pi local time
     raw = {
-        "id": int(captured.timestamp() * 1000),
+        "id": event["unix_ms"],
         "captured_at": captured.isoformat(),
-        "image_url": IMAGE_URL_PREFIX + record["image"] if record.get("image") else "",
-        "weight_after": record.get("weight"),
-        "fullness_after": fullness,
-        "inferred": classification is not None,
+        "image_url": f"{IMAGE_URL_PREFIX}{event['id']}.jpg" if event["image"] else "",
+        "weight_after": event["weight_g"],
+        "fullness_after": event["fullness"],
+        "inferred": event["bin"] is not None,
     }
     inference = None
-    if classification:
+    if event["bin"]:
         inference = {
             "id": raw["id"],
             "raw_id": raw["id"],
-            "bounding_box": classification.get("box") or [],
-            "class_name": DASHBOARD_BIN.get(classification["bin"], classification["bin"]),
+            "bounding_box": (event["classification"] or {}).get("box") or [],
+            "class_name": DASHBOARD_BIN.get(event["bin"], event["bin"]),
             "captured_at": raw["captured_at"],
         }
     return raw, inference
 
 
 def _date_range(query):
+    """Without start_date / end_date: everything, from the first event up to now."""
     def parse(name, default):
         value = query.get(name, [None])[0]
         return datetime.fromisoformat(value).astimezone(timezone.utc) if value else default
 
     end = parse("end_date", datetime.now(timezone.utc))
-    start = parse("start_date", end - timedelta(days=365))
+    start = parse("start_date", datetime.fromtimestamp(0, timezone.utc))
     return start, end
 
 
@@ -98,18 +75,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/health"):
                 model = "wasterec (on device)" if Path(CONFIG["classifier_model"]).exists() else "none"
-                self._json({"status": "ok", "services": {"database": "local files", "ml_model": model}})
+                self._json({"status": "ok", "services": {"database": "SQLite (data/events.db)", "ml_model": model}})
             elif url.path == "/waste-classes":
                 self._json({b: b for b in DASHBOARD_BINS})  # class names are already bins
             elif url.path == "/raw_data":
-                start, end = _date_range(query)
-                data = [raw for raw, _ in items() if start <= datetime.fromisoformat(raw["captured_at"]) <= end]
+                start, end, pairs = items(query)
+                data = [raw for raw, _ in pairs]
                 self._json({"start_date": start.isoformat(), "end_date": end.isoformat(),
                             "count": len(data), "data": data})
             elif url.path == "/inferences":
-                start, end = _date_range(query)
-                data = [inf for _, inf in items()
-                        if inf and start <= datetime.fromisoformat(inf["captured_at"]) <= end]
+                start, end, pairs = items(query)
+                data = [inf for _, inf in pairs if inf]
                 latest = data[-1]["captured_at"] if data else end.isoformat()
                 self._json({"start_date": start.isoformat(), "end_date": end.isoformat(),
                             "count": len(data), "data": data, "latest_inferred": latest})
@@ -121,18 +97,17 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"detail": str(e)}, 422)
 
     def _image(self, name):
-        if IMAGE_NAME.match(name):  # also blocks ../ paths
-            for directory in RECORD_DIRS:
-                path = Path(directory) / name
-                if path.exists():
-                    body = path.read_bytes()
-                    self.send_response(200)
-                    self.send_header("Content-Type", "image/jpeg")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.send_header("Cache-Control", "public, max-age=86400, immutable")
-                    self.end_headers()
-                    self.wfile.write(body)
-                    return
+        match = IMAGE_NAME.match(name)  # also blocks ../ paths
+        path = store.image_path(match.group(1)) if match else None
+        if path and path.exists():
+            body = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=86400, immutable")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self._json({"detail": "Image not found"}, 404)
 
     def _json(self, payload, status=200):

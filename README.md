@@ -5,10 +5,14 @@ Runs on a Raspberry Pi 3 or 4 as two processes:
 
 - **IR watcher** (own process): checks the beam level every 10 ms and sends a trigger when it changes. By default that's when it goes clear (the lid opens); set `ir_trigger_on` to `"broken"` in `config.py` for the opposite.
 - **Pipeline** (main process), once per trigger:
-  Camera (detect object passing in the top two-thirds of the view, keep the frame where it looks biggest) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save to spool. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
-- **Uploader** (background thread): sends spooled records to the API oldest first. If the network is down, they stay on disk and are retried every 10 s.
+  Camera (detect object passing in the top two-thirds of the view, keep the frame where it looks biggest) -> wait for the trash to settle -> Ultrasonic (fullness) and Weight -> save the event. Each reading has its own settle time in `config.py` (`ultrasonic_settle_time`, `weight_settle_time`), counted from when the object leaves the frame.
+- **Uploader** (background thread): sends stored events to the API oldest first. If the network is down, they're retried every 10 s.
 
-Records are saved in `data/spool/` as `<timestamp>.jpg` + `<timestamp>.json`. Records the API refuses (4xx) are moved to `data/spool/rejected/`. The oldest are deleted past `max_records`.
+Every event is kept permanently, whether or not it's uploaded:
+- `data/events.db` (SQLite): one row per event with its time (`ts`, with UTC offset), `fullness` (0-1), `distance_cm`, `weight_g`, the classifier's `bin` and `bin_confidence` (full output in `classification`), the picture's path, and `upload` (`pending` / `uploaded` / `rejected` by the API).
+- `data/images/<date>/<id>.jpg`: the picture of the item. The id is the event's local time, e.g. `20261020T181923_562`.
+
+Nothing is deleted, except that if free disk space drops below `min_free_disk_mb` the oldest *pictures* are removed (their events stay). To look at the data: `sqlite3 data/events.db "SELECT ts, fullness, bin FROM events ORDER BY ts DESC LIMIT 20"`, or copy `events.db` to a PC and open it with any SQLite viewer. Records from the old `data/spool/` and `data/history/` folders are moved in automatically the first time the pipeline starts.
 
 All settings (pins, timings, API URL) are in `config.py`.
 
@@ -108,16 +112,16 @@ on the local dashboard's composition chart and image labels.
 
 Tools (from the repo root, with the `.venv` active):
 ```
-python -m wasterec.classify_bin --image data/spool/<id>.jpg   # classify a saved photo
+python -m wasterec.classify_bin --image data/images/<date>/<id>.jpg   # classify a saved photo
 python -m wasterec.predict --image photo.jpg                  # per-material scores
 python -m wasterec.evaluate_bins --data labeled_photos        # bin accuracy on <bin>/ or <material>/ folders
 ```
 The `--camera` options of these tools open the camera themselves, so stop `main.py` first.
 
 ## Local Dashboard
-The dashboard ([zotbins-data-visualizer](https://github.com/zotbins/zotbins-data-visualizer), a separate repo) can run on the Pi and show this bin's own records, without the cloud. `data/local_api.py` answers the dashboard's API requests (`/raw_data`, `/inferences`, `/waste-classes`) from `data/spool/` and `data/history/`, and serves the images. There is no ML on the Pi, so the composition charts stay empty.
+The dashboard ([zotbins-data-visualizer](https://github.com/zotbins/zotbins-data-visualizer), a separate repo) can run on the Pi and show this bin's own records, without the cloud. `data/local_api.py` answers the dashboard's API requests (`/raw_data`, `/inferences`, `/waste-classes`) from `data/events.db`, and serves the images, so the dashboard shows the bin's whole history. The composition chart uses the on-device classifier's bin.
 
-Fullness is reported as a fraction using `bin_empty_distance_cm` and `bin_full_distance_cm` in `config.py`. Uploaded records are moved to `data/history/` (up to `max_history`) instead of being deleted, so the dashboard keeps them.
+Fullness is reported as a fraction using `bin_empty_distance_cm` and `bin_full_distance_cm` in `config.py`.
 
 1. Start the local API (it only listens on the Pi itself):
    ```
