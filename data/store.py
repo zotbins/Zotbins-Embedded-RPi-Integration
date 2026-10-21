@@ -44,6 +44,11 @@ CREATE TABLE IF NOT EXISTS fullness_readings (
     fullness       REAL,              -- 0.0 empty .. 1.0 full
     distance_cm    REAL               -- raw ultrasonic reading
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key            TEXT PRIMARY KEY,  -- e.g. dashboard_since: the dashboard only shows events after this
+    value          TEXT
+);
 """
 COLUMNS = ("id", "ts", "unix_ms", "fullness", "distance_cm", "weight_g", "transit_s",
            "bin", "bin_confidence", "classification", "image", "upload")
@@ -124,6 +129,19 @@ class EventStore:
                     SELECT ts, unix_ms, fullness, distance_cm FROM fullness_readings WHERE distance_cm IS NOT NULL
                 ) ORDER BY unix_ms DESC LIMIT 1""").fetchone()
         return dict(row) if row else None
+
+    def get_setting(self, key):
+        with self._connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key, value):
+        """None removes it."""
+        with self._connect() as db:
+            if value is None:
+                db.execute("DELETE FROM settings WHERE key = ?", (key,))
+            else:
+                db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, value))
 
     def image_path(self, event_id) -> Path | None:
         with self._connect() as db:
