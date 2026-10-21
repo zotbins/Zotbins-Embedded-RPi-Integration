@@ -4,8 +4,8 @@ It answers the same GET requests as the cloud API, from the event store main.py 
 (data/events.db + data/images), so the dashboard works without the cloud and shows the bin's whole history.
 /inferences and /waste-classes come from the on-device classifier (wasterec) that main.py runs.
 
-POST /dashboard/reset starts the dashboard afresh from now (DELETE undoes it, GET shows when):
-earlier events are kept in the database but left out of every answer.
+After `python3 -m data.dashboard_reset`, events before the reset are left out of every answer
+(they stay in the database).
 
 Run: python -m data.local_api   (dashboard .env.local: NEXT_PUBLIC_API_URL=http://localhost:8000)
 """
@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 from config import CONFIG
 from data.fullness import fullness_from_distance
-from data.store import EventStore
+from data.store import RESET_KEY, EventStore
 
 log = logging.getLogger("LocalAPI")
 
@@ -30,7 +30,6 @@ DASHBOARD_BINS = ("landfill", "recycle", "compost")
 IMAGE_NAME = re.compile(r"^(\d{8}T\d{6}_\d{3})\.jpg$")
 # The dashboard's next.config.ts forwards this path to /images here, so image links work from any browser.
 IMAGE_URL_PREFIX = "/zotbins-images/"
-RESET_KEY = "dashboard_since"
 
 
 def items(query):
@@ -109,29 +108,12 @@ class Handler(BaseHTTPRequestHandler):
                 if current:
                     current["fullness"] = _fullness(current)
                 self._json(current or {"detail": "No fullness reading yet"}, 200 if current else 404)
-            elif url.path == "/dashboard/reset":
-                self._json({"since": store.get_setting(RESET_KEY)})
             elif url.path.startswith("/images/"):
                 self._image(url.path.removeprefix("/images/"))
             else:
                 self._json({"detail": "Not Found"}, 404)
         except ValueError as e:  # bad date in the query
             self._json({"detail": str(e)}, 422)
-
-    def do_POST(self):
-        if urlparse(self.path).path != "/dashboard/reset":
-            return self._json({"detail": "Not Found"}, 404)
-        since = datetime.now().astimezone().isoformat(timespec="milliseconds")
-        store.set_setting(RESET_KEY, since)
-        log.info("Dashboard reset: showing events from %s", since)
-        self._json({"since": since})
-
-    def do_DELETE(self):
-        if urlparse(self.path).path != "/dashboard/reset":
-            return self._json({"detail": "Not Found"}, 404)
-        store.set_setting(RESET_KEY, None)
-        log.info("Dashboard reset undone: showing all events")
-        self._json({"since": None})
 
     def _image(self, name):
         match = IMAGE_NAME.match(name)  # also blocks ../ paths

@@ -20,6 +20,8 @@ from data.fullness import fullness_from_distance
 
 log = logging.getLogger("Store")
 
+RESET_KEY = "dashboard_since"  # setting: the dashboard only shows events after this time (data.dashboard_reset)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
     id             TEXT PRIMARY KEY,  -- local time, e.g. 20261020T181923_562

@@ -14,6 +14,13 @@ Every event is kept permanently, whether or not it's uploaded:
 
 Nothing is deleted, except that if free disk space drops below `min_free_disk_mb` the oldest *pictures* are removed (their events stay). To look at the data: `sqlite3 data/events.db "SELECT ts, fullness, bin FROM events ORDER BY ts DESC LIMIT 20"`, or copy `events.db` to a PC and open it with any SQLite viewer. Records from the old `data/spool/` and `data/history/` folders are moved in automatically the first time the pipeline starts.
 
+To start the dashboard afresh (e.g. after test data) without deleting anything, run on the Pi from the repo root:
+```
+python3 -m data.dashboard_reset            # dashboard shows only events from now on
+python3 -m data.dashboard_reset --status   # when it was last reset
+python3 -m data.dashboard_reset --undo     # show all events again
+```
+
 All settings (pins, timings, API URL) are in `config.py`.
 
 ### Disabling Sensors
