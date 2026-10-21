@@ -121,7 +121,7 @@ The `--camera` options of these tools open the camera themselves, so stop `main.
 ## Local Dashboard
 The dashboard ([zotbins-data-visualizer](https://github.com/zotbins/zotbins-data-visualizer), a separate repo) can run on the Pi and show this bin's own records, without the cloud. `data/local_api.py` answers the dashboard's API requests (`/raw_data`, `/inferences`, `/waste-classes`) from `data/events.db`, and serves the images, so the dashboard shows the bin's whole history. The composition chart uses the on-device classifier's bin.
 
-Fullness is reported as a fraction using `bin_empty_distance_cm` and `bin_full_distance_cm` in `config.py`.
+Fullness is reported as a fraction using `bin_empty_distance_cm` (sensor to the bottom of the empty bin, 40 in) and `bin_full_distance_cm` in `config.py`. The dashboard recalculates it from each stored `distance_cm`, so after changing these (and restarting `zotbins-local-api`) the whole history uses the new calibration.
 
 1. Start the local API (it only listens on the Pi itself):
    ```

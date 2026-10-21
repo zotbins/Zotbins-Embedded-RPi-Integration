@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from config import CONFIG
+from data.fullness import fullness_from_distance
 from data.store import EventStore
 
 log = logging.getLogger("LocalAPI")
@@ -35,6 +36,13 @@ def items(query):
     return start, end, [_to_items(event) for event in events]
 
 
+def _fullness(row):
+    """From the raw distance with today's calibration, so changing bin_empty/full_distance_cm also fixes the history."""
+    if row["distance_cm"] is None:
+        return row["fullness"]
+    return fullness_from_distance(row["distance_cm"], CONFIG["bin_empty_distance_cm"], CONFIG["bin_full_distance_cm"])
+
+
 def _to_items(event):
     captured = datetime.fromisoformat(event["ts"]).astimezone()  # shown in Pi local time
     raw = {
@@ -42,7 +50,7 @@ def _to_items(event):
         "captured_at": captured.isoformat(),
         "image_url": f"{IMAGE_URL_PREFIX}{event['id']}.jpg" if event["image"] else "",
         "weight_after": event["weight_g"],
-        "fullness_after": event["fullness"],
+        "fullness_after": _fullness(event),
         "inferred": event["bin"] is not None,
     }
     inference = None
@@ -91,6 +99,8 @@ class Handler(BaseHTTPRequestHandler):
                             "count": len(data), "data": data, "latest_inferred": latest})
             elif url.path == "/fullness/current":  # not in the cloud API; the dashboard falls back without it
                 current = store.current_fullness()
+                if current:
+                    current["fullness"] = _fullness(current)
                 self._json(current or {"detail": "No fullness reading yet"}, 200 if current else 404)
             elif url.path.startswith("/images/"):
                 self._image(url.path.removeprefix("/images/"))
