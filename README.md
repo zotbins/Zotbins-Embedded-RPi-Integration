@@ -141,6 +141,20 @@ sudo systemctl enable --now zotbins-local-api zotbins-dashboard
 ```
 After changing the dashboard code, rebuild it (`npm run build`) and `sudo systemctl restart zotbins-dashboard`.
 
+### On the Pi's Own Screen
+With a monitor on the Pi's HDMI 0 port (the micro-HDMI next to USB-C), the Pi logs in to the desktop by itself and shows the dashboard full-screen (`deploy/kiosk/zotbins-kiosk.sh`). The screen turns off after 5 minutes with the lid closed and no keyboard / mouse / touch input, and back on when the lid opens (`deploy/kiosk/screen_power.py`).
+
+Install (run from this repo, then reboot):
+```
+install -Dm755 deploy/kiosk/zotbins-kiosk.sh ~/.local/bin/zotbins-kiosk
+install -Dm755 deploy/kiosk/screen_power.py ~/.local/bin/zotbins-screen-power
+mkdir -p ~/.config/autostart
+for f in deploy/kiosk/*.desktop; do sed "s|@HOME@|$HOME|g" "$f" > ~/.config/autostart/$(basename "$f"); done
+sudo raspi-config nonint do_boot_behaviour B4   # log in to the desktop automatically
+sudo raspi-config nonint do_wayland W3          # labwc desktop; Chromium's kiosk window stays invisible under Wayfire 0.7
+```
+To change the timeout, edit `--timeout` in `~/.config/autostart/zotbins-screen-power.desktop`. To stop showing the dashboard, delete the two `zotbins-*.desktop` files there.
+
 ## Future Implementations
 Here is the bare minimum requirements for deployment:
 - IR-Sensor Readings (Completed)

@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=ZotBins dashboard
+Comment=Shows the dashboard full-screen. Installed by the command in README.md, which fills in the home folder.
+Exec=@HOME@/.local/bin/zotbins-kiosk

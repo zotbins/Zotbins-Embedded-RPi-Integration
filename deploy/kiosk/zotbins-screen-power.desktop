@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=ZotBins screen power
+Comment=Turns the screen off after 5 min unused. Installed by the command in README.md, which fills in the home folder.
+Exec=@HOME@/.local/bin/zotbins-screen-power --timeout 300
