@@ -31,6 +31,7 @@ CONFIG = {
     "jpeg_quality": 90,
     "ultrasonic_samples": 5,  # Number of Samples from Ultrasonic
     "ultrasonic_settle_time": 3.0,  # Seconds after the object leaves the frame before measuring fullness
+    "fullness_interval": 60.0,  # Seconds between fullness readings while no item is going in (dashboard "Current")
     "bin_empty_distance_cm": 66.7,  # Ultrasonic reading with the bin empty (measured) = 0% full
     "bin_full_distance_cm": 10.0,  # Reading at which the bin counts as 100% full
     "weight_samples": 10,  # Total Weight Samples

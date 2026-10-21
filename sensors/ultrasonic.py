@@ -27,6 +27,7 @@ class Ultrasonic:
         self._rise_tick = None
         self._pulse_us = None
         self._echo_done = threading.Event()
+        self._lock = threading.Lock()  # the pipeline and the fullness monitor thread both measure
         # pigpiod timestamps each edge in microsecond hardware ticks, so the
         # measurement doesn't depend on Python scheduling or busy-waiting.
         self._callback = self.pi.callback(echo_pin, pigpio.EITHER_EDGE, self._on_edge)
@@ -50,12 +51,13 @@ class Ultrasonic:
     def measure(self, samples=5):
         """Median of several pings. Returns None if every ping failed."""
         readings = []
-        for i in range(samples):
-            if i:
-                time.sleep(PING_INTERVAL_S)
-            cm = self.read_cm()
-            if cm is not None:
-                readings.append(cm)
+        with self._lock:
+            for i in range(samples):
+                if i:
+                    time.sleep(PING_INTERVAL_S)
+                cm = self.read_cm()
+                if cm is not None:
+                    readings.append(cm)
 
         if not readings:
             log.warning("No echo received in %d pings", samples)

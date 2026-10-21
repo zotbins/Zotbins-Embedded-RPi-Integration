@@ -89,6 +89,9 @@ class Handler(BaseHTTPRequestHandler):
                 latest = data[-1]["captured_at"] if data else end.isoformat()
                 self._json({"start_date": start.isoformat(), "end_date": end.isoformat(),
                             "count": len(data), "data": data, "latest_inferred": latest})
+            elif url.path == "/fullness/current":  # not in the cloud API; the dashboard falls back without it
+                current = store.current_fullness()
+                self._json(current or {"detail": "No fullness reading yet"}, 200 if current else 404)
             elif url.path.startswith("/images/"):
                 self._image(url.path.removeprefix("/images/"))
             else:

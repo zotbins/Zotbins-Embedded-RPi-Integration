@@ -1,0 +1,3 @@
+# Lets the input group (the desktop user) create the virtual mouse zotbins-screen-power uses to park the pointer.
+# Install: sudo cp deploy/kiosk/99-zotbins-uinput.rules /etc/udev/rules.d/ && sudo udevadm trigger --name-match=uinput
+KERNEL=="uinput", GROUP="input", MODE="0660"

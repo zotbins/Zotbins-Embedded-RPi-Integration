@@ -1,6 +1,7 @@
 """Every event (an item going into the bin), kept permanently.
 
-    data/events.db                        one row per event: time, fullness, weight, classification, upload status
+    data/events.db                        one row per event: time, fullness, weight, classification, upload status;
+                                          plus fullness_readings, the fullness measured every minute between events
     data/images/2026-10-20/<id>.jpg       the picture of the item, one folder per day
 
 Ids are the event's local time (20261020T181923_562), so sorting them gives oldest first.
@@ -36,6 +37,13 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS events_time ON events (unix_ms);
 CREATE INDEX IF NOT EXISTS events_upload ON events (upload) WHERE upload = 'pending';
+
+CREATE TABLE IF NOT EXISTS fullness_readings (
+    unix_ms        INTEGER PRIMARY KEY,
+    ts             TEXT NOT NULL,     -- ISO 8601 with UTC offset
+    fullness       REAL,              -- 0.0 empty .. 1.0 full
+    distance_cm    REAL               -- raw ultrasonic reading
+);
 """
 COLUMNS = ("id", "ts", "unix_ms", "fullness", "distance_cm", "weight_g", "transit_s",
            "bin", "bin_confidence", "classification", "image", "upload")
@@ -98,6 +106,24 @@ class EventStore:
             rows = db.execute("SELECT * FROM events WHERE unix_ms BETWEEN ? AND ? ORDER BY unix_ms",
                               (start_ms or 0, end_ms or 2**62)).fetchall()
         return [_as_event(row) for row in rows]
+
+    def add_reading(self, fullness, distance_cm):
+        """A fullness measurement taken between events (so emptying the bin shows up without an event)."""
+        now = datetime.now().astimezone()
+        with self._connect() as db:
+            db.execute("INSERT OR REPLACE INTO fullness_readings VALUES (?, ?, ?, ?)",
+                       (int(now.timestamp() * 1000), now.isoformat(timespec="milliseconds"), fullness, distance_cm))
+
+    def current_fullness(self) -> dict | None:
+        """The newest fullness measurement, from an event or a reading between events."""
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT ts, unix_ms, fullness, distance_cm FROM (
+                    SELECT ts, unix_ms, fullness, distance_cm FROM events WHERE distance_cm IS NOT NULL
+                    UNION ALL
+                    SELECT ts, unix_ms, fullness, distance_cm FROM fullness_readings WHERE distance_cm IS NOT NULL
+                ) ORDER BY unix_ms DESC LIMIT 1""").fetchone()
+        return dict(row) if row else None
 
     def image_path(self, event_id) -> Path | None:
         with self._connect() as db:

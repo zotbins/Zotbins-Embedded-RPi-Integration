@@ -3,6 +3,7 @@ import logging
 import multiprocessing as mp
 import queue
 import signal
+import threading
 import time
 
 import cv2
@@ -20,11 +21,13 @@ from wasterec.classifier import BinClassifier
 log = logging.getLogger("Main")
 
 
-def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader):
+def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader, busy):
     while not stop.is_set():
-        event = _next_event(cfg, stop, triggers, ir_process, camera)
+        busy.clear()
+        event = _next_event(cfg, stop, triggers, ir_process, camera, busy)
         if event is None:
             continue
+        busy.set()
         frame, event_time, transit, box = event
 
         # Encode the JPEG and classify the item while the trash settles.
@@ -62,8 +65,22 @@ def run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, cl
                  "n/a" if fullness is None else f"{fullness:.0%}", _fmt(distance), _fmt(grams))
 
 
-def _next_event(cfg, stop, triggers, ir_process, camera):
-    """Wait for the next item to go in the bin.
+def monitor_fullness(cfg, stop, ultrasonic, store, busy):
+    """Measures fullness every fullness_interval while no item is going in, so the dashboard's
+    "Current" is up to date even when the bin is emptied (which isn't an event)."""
+    while not stop.wait(cfg["fullness_interval"]):
+        if busy.is_set():
+            continue  # the event takes its own reading once the item has settled
+        try:
+            distance = ultrasonic.measure(cfg["ultrasonic_samples"])
+            fullness = fullness_from_distance(distance, cfg["bin_empty_distance_cm"], cfg["bin_full_distance_cm"])
+            store.add_reading(fullness, None if distance is None else round(distance, 1))
+        except Exception as e:  # keep monitoring; the next reading may work
+            log.error("Fullness reading failed: %s", e)
+
+
+def _next_event(cfg, stop, triggers, ir_process, camera, busy):
+    """Wait for the next item to go in the bin. Sets `busy` once one is on its way.
 
     Returns (frame or None, monotonic time it passed, seconds in view or None, object box or None),
     or None if nothing happened.
@@ -72,6 +89,7 @@ def _next_event(cfg, stop, triggers, ir_process, camera):
         trigger = _wait_for_trigger(cfg, stop, triggers, ir_process)
         if trigger is None:
             return None
+        busy.set()  # the lid is open: no fullness readings until the item has settled
         log.info("-------- Cycle #%d --------", trigger["trigger"])
         if camera is None:
             return None, trigger["ts"], None, None
@@ -203,8 +221,13 @@ def main():
                 cfg["classifier_model"], threshold=cfg["classifier_threshold"],
                 fallback=cfg["classifier_fallback"], threads=cfg["classifier_threads"]))
 
+        busy = threading.Event()
+        if ultrasonic:
+            threading.Thread(target=monitor_fullness, args=(cfg, stop, ultrasonic, store, busy),
+                             name="fullness", daemon=True).start()
+
         log.info("-------------------- Ready --------------------")
-        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader)
+        run_pipeline(cfg, stop, triggers, ir_process, camera, ultrasonic, weight, classifier, store, uploader, busy)
     finally:
         stop.set()
         uploader.wake()

@@ -146,7 +146,7 @@ sudo systemctl enable --now zotbins-local-api zotbins-dashboard
 After changing the dashboard code, rebuild it (`npm run build`) and `sudo systemctl restart zotbins-dashboard`.
 
 ### On the Pi's Own Screen
-With a monitor on the Pi's HDMI 0 port (the micro-HDMI next to USB-C), the Pi logs in to the desktop by itself and shows the dashboard full-screen (`deploy/kiosk/zotbins-kiosk.sh`). The screen turns off after 5 minutes with the lid closed and no keyboard / mouse / touch input, and back on when the lid opens (`deploy/kiosk/screen_power.py`).
+With a monitor on the Pi's HDMI 0 port (the micro-HDMI next to USB-C), the Pi logs in to the desktop by itself and shows the dashboard full-screen (`deploy/kiosk/zotbins-kiosk.sh`). The screen turns off after 5 minutes with the lid closed and no keyboard / mouse / touch input, and back on when the lid opens (`deploy/kiosk/screen_power.py`). It also moves the mouse pointer to the top-left corner at login and 10 s after the mouse was last used.
 
 Install (run from this repo, then reboot):
 ```
@@ -156,6 +156,8 @@ mkdir -p ~/.config/autostart
 for f in deploy/kiosk/*.desktop; do sed "s|@HOME@|$HOME|g" "$f" > ~/.config/autostart/$(basename "$f"); done
 sudo raspi-config nonint do_boot_behaviour B4   # log in to the desktop automatically
 sudo raspi-config nonint do_wayland W3          # labwc desktop; Chromium's kiosk window stays invisible under Wayfire 0.7
+python3 deploy/kiosk/hide_cursor.py             # invisible mouse pointer (--undo to get it back)
+sudo cp deploy/kiosk/99-zotbins-uinput.rules /etc/udev/rules.d/   # lets the screen watcher park the pointer top-left
 ```
 To change the timeout, edit `--timeout` in `~/.config/autostart/zotbins-screen-power.desktop`. To stop showing the dashboard, delete the two `zotbins-*.desktop` files there.
 
