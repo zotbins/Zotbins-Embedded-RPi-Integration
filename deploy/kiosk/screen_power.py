@@ -5,6 +5,8 @@ Activity is the lid being open (IR beam clear) or any keyboard / mouse / touch i
 Started at desktop login by zotbins-screen-power.desktop; it needs the desktop session for wlr-randr.
 The IR pin is read with pinctrl, which only reads it, so it doesn't interfere with the pipeline.
 
+When a screen is plugged in (e.g. the Pi booted without one), the browser is reopened so it fills that screen.
+
 It also parks the mouse pointer in the top-left corner, at login and once the mouse has been left alone,
 using a virtual mouse (/dev/uinput; deploy/kiosk/99-zotbins-uinput.rules gives the input group access).
 """
@@ -96,6 +98,15 @@ def input_activity(fds):
     return bool(ready)
 
 
+def connected(output):
+    """Whether a screen is plugged into this output (the kernel's view, so it works while the output is off)."""
+    for status in glob.glob(f"/sys/class/drm/card*-{output}/status"):
+        with open(status) as f:
+            if f.read().strip() == "connected":
+                return True
+    return False
+
+
 def set_screen(output, on):
     subprocess.run(["wlr-randr", "--output", output, "--on" if on else "--off"], check=False)
     if on:
@@ -119,12 +130,22 @@ def main():
     last_activity = last_rescan = last_input = time.monotonic()
     screen_on = True
     parked = False
+    plugged = connected(args.output)
 
     while True:
         now = time.monotonic()
         if now - last_rescan > RESCAN_S:
             open_new_inputs(fds)
             last_rescan = now
+        if connected(args.output) != plugged:
+            plugged = not plugged
+            log.info("Screen %s", "plugged in" if plugged else "unplugged")
+            if plugged:
+                # Without a screen the browser opened on labwc's stand-in output and keeps its size,
+                # not full-screen. Reopening it (set_screen) makes it fill the real screen.
+                time.sleep(2)  # let labwc set the new output up first
+                set_screen(args.output, True)
+                screen_on, last_activity = True, time.monotonic()
         used = input_activity(fds)
         if used:
             last_input, parked = time.monotonic(), False
