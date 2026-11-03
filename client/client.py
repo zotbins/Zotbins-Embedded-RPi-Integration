@@ -13,12 +13,13 @@ class Uploader(threading.Thread):
     or API is down, it retries every `retry_interval` seconds.
     """
 
-    def __init__(self, store, api_url, stop_event, retry_interval=10.0):
+    def __init__(self, store, api_url, stop_event, retry_interval=10.0, upload_timeout=300.0):
         super().__init__(name="uploader", daemon=True)
         self.store = store
         self.api_url = api_url.rstrip("/")
         self.stop_event = stop_event
         self.retry_interval = retry_interval
+        self.timeout = (5, upload_timeout)
         self.session = requests.Session()  # reuses the connection between uploads
         self._wake = threading.Event()
 
@@ -70,18 +71,18 @@ class Uploader(threading.Thread):
         url = f"{self.api_url}/record"
         fields = _form_fields(record)
         if image_path is None:  # camera disabled, or the picture was removed to free disk space
-            return self.session.post(url, data=fields, timeout=(5, 30))
+            return self.session.post(url, data=fields, timeout=self.timeout)
         with open(image_path, "rb") as image:
             return self.session.post(
                 url,
                 data=fields,
                 files={"image": ("image.jpg", image, "image/jpeg")},
-                timeout=(5, 30),
+                timeout=self.timeout,
             )
 
 
 def _form_fields(record):
-    return {key: record[key] for key in ("weight", "fullness") if record.get(key) is not None}
+    return {key: record[key] for key in ("weight", "fullness", "captured_at") if record.get(key) is not None}
 
 
 def _log_inference(response):

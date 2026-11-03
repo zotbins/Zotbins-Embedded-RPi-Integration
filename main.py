@@ -200,7 +200,7 @@ def main():
 
     store = EventStore(cfg["data_dir"], cfg["min_free_disk_mb"])
     store.import_legacy(cfg["data_dir"] / "spool", cfg["bin_empty_distance_cm"], cfg["bin_full_distance_cm"])
-    uploader = Uploader(store, cfg["api_url"], stop, cfg["upload_retry_interval"])
+    uploader = Uploader(store, cfg["api_url"], stop, cfg["upload_retry_interval"], cfg["upload_timeout"])
     uploader.start()
 
     camera = ultrasonic = weight = classifier = None
