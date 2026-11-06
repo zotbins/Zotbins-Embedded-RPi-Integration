@@ -162,7 +162,7 @@ class EventStore:
         if row is None:
             raise FileNotFoundError(event_id)
         image = self.images_dir / row["image"] if row["image"] else None
-        return {"weight": row["weight_g"], "fullness": row["fullness"]}, image if image and image.exists() else None
+        return {"weight": row["weight_g"], "fullness": row["fullness"], "captured_at": row["ts"]}, image if image and image.exists() else None
 
     def mark_uploaded(self, event_id):
         self._set_upload(event_id, "uploaded")

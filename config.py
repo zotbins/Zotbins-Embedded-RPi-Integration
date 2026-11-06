@@ -50,6 +50,7 @@ CONFIG = {
     "min_free_disk_mb": 1000,  # Below this much free space the oldest pictures are deleted (their events are kept)
     "api_url": "",  # Front-End API base URL; events are uploaded once this is set and reachable
     "upload_retry_interval": 10.0,
+    "upload_timeout": 300.0,  # Seconds to wait for a reply; an upload that fills a batch waits for ML inference on the server
 
     # Local API the dashboard reads from (python -m data.local_api)
     "local_api_host": "127.0.0.1",  # Only the dashboard on this Pi talks to it
