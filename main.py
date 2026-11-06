@@ -193,7 +193,9 @@ def main():
 
     def request_stop(signum, frame):
         log.info("Shutting down...")
-        stop.set()
+        # Not stop.set() here: the handler runs on the main thread, which may be inside stop.wait(),
+        # and a multiprocessing Event's set() waits for its waiters to wake, so it would wait on itself.
+        threading.Thread(target=stop.set, name="stop", daemon=True).start()
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
