@@ -1,8 +1,8 @@
 # Installed by the command in README.md, which fills in @USER@ and @DIR@.
 [Unit]
 Description=ZotBins sensor pipeline
-After=network-online.target pigpiod.service
-Wants=network-online.target pigpiod.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple

@@ -112,7 +112,7 @@ def set_screen(output, on):
     if on:
         # With the output off the browser loses full-screen, and labwc 0.7 can't use DPMS instead
         # (wlopm fails). Closing the browser makes zotbins-kiosk reopen it full-screen.
-        subprocess.run(["pkill", "-x", "chromium-browse"], check=False)
+        subprocess.run(["pkill", "-x", "chromium"], check=False)
 
 
 def main():

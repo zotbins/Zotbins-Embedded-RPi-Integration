@@ -31,15 +31,14 @@ Set `enable_ir`, `enable_camera`, `enable_ultrasonic` or `enable_weight` to `Fal
 - **IR and camera off:** a cycle runs every `no_trigger_interval` seconds.
 
 ## How to Run
-Requires Raspberry Pi OS (Bookworm recommended) on a Pi 3 or 4.
+Requires 64-bit Raspberry Pi OS **Trixie** on a Pi 3 or 4. For Bookworm, use the `legacy-implementation` branch.
 ```
 git clone https://github.com/zotbins/Zotbins-Embedded-RPi-Integration.git
 cd Zotbins-Embedded-RPi-Integration
 ```
 Install the system packages (camera, OpenCV and GPIO libraries come from apt, not pip):
 ```
-sudo apt install python3-picamera2 python3-opencv python3-numpy python3-pigpio pigpiod python3-rpi.gpio
-sudo systemctl enable --now pigpiod
+sudo apt install python3-picamera2 python3-opencv python3-numpy python3-lgpio python3-rpi-lgpio
 ```
 Create the virtual environment (it must see the apt packages) and install the rest:
 ```
@@ -162,7 +161,7 @@ install -Dm755 deploy/kiosk/screen_power.py ~/.local/bin/zotbins-screen-power
 mkdir -p ~/.config/autostart
 for f in deploy/kiosk/*.desktop; do sed "s|@HOME@|$HOME|g" "$f" > ~/.config/autostart/$(basename "$f"); done
 sudo raspi-config nonint do_boot_behaviour B4   # log in to the desktop automatically
-sudo raspi-config nonint do_wayland W3          # labwc desktop; Chromium's kiosk window stays invisible under Wayfire 0.7
+sudo raspi-config nonint do_wayland W2          # labwc desktop (Wayland), which the kiosk scripts use
 python3 deploy/kiosk/hide_cursor.py             # invisible mouse pointer (--undo to get it back)
 sudo cp deploy/kiosk/99-zotbins-uinput.rules /etc/udev/rules.d/   # lets the screen watcher park the pointer top-left
 ```

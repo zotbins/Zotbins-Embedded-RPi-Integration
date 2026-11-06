@@ -1,6 +1,6 @@
 # Hardware and vision libraries come from apt so they match the Pi OS builds
 # (pip versions of opencv/numpy often break picamera2). See README:
-#   sudo apt install python3-picamera2 python3-opencv python3-numpy python3-pigpio pigpiod python3-rpi.gpio
+#   sudo apt install python3-picamera2 python3-opencv python3-numpy python3-lgpio python3-rpi-lgpio
 # Create the venv with --system-site-packages so it can see them.
 requests>=2.28
 onnxruntime  # on-device classifier (wasterec); needs 64-bit Raspberry Pi OS
