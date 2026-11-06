@@ -8,6 +8,9 @@ from picamera2 import Picamera2
 log = logging.getLogger("Camera")
 
 LIGHT_SETTLE_S = 0.2  # Frames already queued were taken before the light came on; discard this long
+# The light board is active-low: driving the pin low turns the light on.
+LIGHT_ON = GPIO.LOW
+LIGHT_OFF = GPIO.HIGH
 
 
 class Camera:
@@ -33,7 +36,7 @@ class Camera:
         if light_pin is not None:
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
-            GPIO.setup(light_pin, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(light_pin, GPIO.OUT, initial=LIGHT_OFF)
 
         self.picam = Picamera2()
         # "RGB888" is stored as B,G,R in memory, which is what OpenCV expects, so no conversion is needed.
@@ -72,21 +75,21 @@ class Camera:
         self.picam.stop()
         self.picam.close()
         if self.light_pin is not None:
+            # No GPIO.cleanup(): it turns the pin back into a floating input, which can switch
+            # the light on. Left as an output, the pin stays high (light off) after we exit.
             self._light_off()
-            # Only release our own pin; GPIO.cleanup() with no args would reset every pin.
-            GPIO.cleanup(self.light_pin)
 
     def _light_on(self):
         if self.light_pin is None:
             return
-        GPIO.output(self.light_pin, GPIO.HIGH)
+        GPIO.output(self.light_pin, LIGHT_ON)
         end = time.monotonic() + LIGHT_SETTLE_S
         while time.monotonic() < end:
             self.picam.capture_request().release()
 
     def _light_off(self):
         if self.light_pin is not None:
-            GPIO.output(self.light_pin, GPIO.LOW)
+            GPIO.output(self.light_pin, LIGHT_OFF)
 
     def refresh_reference(self):
         """Re-capture the empty background. Call with the light on."""
